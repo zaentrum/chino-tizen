@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Fails the build if any internal hostname, competitor product name, or
+  # acquisition vocabulary leaks into the public tree. Patterns are kept here
+  # (a heredoc) so this job's own source is excluded from its own grep.
+  neutrality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan for forbidden tokens
+        run: |
+          set -uo pipefail
+          fail=0
+          common=(--exclude-dir=node_modules --exclude-dir=dist
+                  --exclude-dir=.git --exclude-dir=.github
+                  --exclude=package-lock.json --exclude=LICENSE)
+
+          scan() {
+            local label="$1" pattern="$2"
+            echo "== $label =="
+            if grep -rniIE "${common[@]}" -- "$pattern" .; then
+              echo "::error::neutrality violation ($label)"
+              fail=1
+            fi
+          }
+
+          # Internal hostnames (any *.nalet.cloud, gitlab/kb/registry/sso/identity).
+          scan "internal hostnames" 'nalet\.cloud'
+          # Competitor product names (case-insensitive).
+          scan "competitor names" 'jellyfin|plex|emby|kodi|naletflix'
+          # Acquisition vocabulary in user-facing text / code.
+          scan "acquisition vocab" '\b(indexer|usenet|torrent)\b|\*arr\b|\b(sonarr|radarr|prowlarr|lidarr|bazarr|jackett)\b'
+
+          if [ "$fail" -ne 0 ]; then
+            echo "Neutrality scan failed — see violations above."
+            exit 1
+          fi
+          echo "Neutrality scan passed."
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-bundle
+          path: dist
+          retention-days: 7
+
+  # Signed .wgt packaging. GUARDED on the author-certificate secret: when it is
+  # absent (forks, PRs without secrets) the whole job is skipped — never failed.
+  package-wgt:
+    needs: [build, neutrality]
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && secrets.TIZEN_AUTHOR_CERT_B64 != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Build + sign .wgt
+        env:
+          # ci-package-wgt.sh reads these two names; map the GH secrets onto them.
+          TIZEN_AUTHOR_P12_B64: ${{ secrets.TIZEN_AUTHOR_CERT_B64 }}
+          TIZEN_AUTHOR_PASSWORD: ${{ secrets.TIZEN_AUTHOR_PASSWORD }}
+        run: bash tools/ci-package-wgt.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chino-tizen-wgt
+          path: .buildResult/Chino.wgt
+          retention-days: 28

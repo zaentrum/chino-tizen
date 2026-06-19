@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Tizen TV web-app manifest. Package id is the fixed 10-char id; the
+     application id is <package>.<name>. required_version 2.4 keeps us
+     installable on the broad Samsung baseline (Tizen 4.0 / 2018+). -->
+<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets"
+        id="http://zaentrum.github.io/chino-tizen" version="0.1.0" viewmodes="maximized">
+  <tizen:application id="chinotizen.Chino" package="chinotizen" required_version="2.4"/>
+  <tizen:profile name="tv-samsung"/>
+  <name>Chino</name>
+  <icon src="icon.png"/>
+  <content src="index.html"/>
+  <feature name="http://tizen.org/feature/screen.size.all"/>
+  <tizen:privilege name="http://tizen.org/privilege/internet"/>
+  <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice"/>
+  <tizen:privilege name="http://tizen.org/privilege/application.launch"/>
+  <tizen:setting screen-orientation="landscape" context-menu="disable"
+                 background-support="disable" encryption="disable"
+                 install-location="auto" hwkey-event="enable"/>
+</widget>

@@ -1,0 +1,467 @@
+// hls.js + HTMLVideoElement engine. The off-device default (desktop dev) and
+// the on-device fallback when AVPlay can't decode a stream. Mirrors
+// chino-web's PlayerPage hls.js configuration (buffer caps, retry knobs,
+// circuit-breaker error handling) and its subtitle handling: native <track>
+// for text formats (webvtt/srt) and libpgs-js's canvas overlay for PGS.
+//
+// Single-variant ladder: chino-stream's master.m3u8 emits ONE video variant
+// matching ?q=. Changing quality therefore means reloading a different master
+// URL — that's the screen's job (it rebuilds the URL and calls load() again);
+// setQuality() here only steers hls.js's own ABR level when the manifest
+// happens to carry multiple levels (it normally doesn't).
+
+import Hls from 'hls.js';
+import { PgsRenderer } from 'libpgs';
+// Vite resolves this to an emitted asset URL; the worker file is already an
+// IIFE so it loads via `new Worker(url)` with no extra glue. Keeps libpgs's
+// worker out of the main bundle. Mirror of chino-web's import.
+import libpgsWorkerUrl from 'libpgs/dist/libpgs.worker.js?url';
+import type {
+  ChinoPlayer,
+  LoadOptions,
+  PlayerAudioTrack,
+  PlayerEvent,
+  PlayerSubtitle,
+  PlayerTextTrack,
+  SubtitleCapableEngine,
+} from './types';
+
+// PGS / bitmap subtitle codecs have no <track> renderer — PGS rides the
+// libpgs canvas, the rest are unrenderable on the web pipeline. Kept in sync
+// with chino-web's NO_WEB_RENDERER / BITMAP_SUB_CODECS filtering (the screen
+// is expected to pre-filter, but we double-guard so a stray .sup never mounts
+// as a broken <track>).
+const BITMAP_FORMATS = new Set(['pgs', 'vobsub', 'dvdsub', 'dvb', 'dvbsub', 'xsub']);
+
+export class HlsEngine implements ChinoPlayer, SubtitleCapableEngine {
+  private video: HTMLVideoElement | null = null;
+  private hls: Hls | null = null;
+  private container: HTMLElement | null = null;
+
+  // libpgs renderer for the active PGS sidecar; one alive at a time.
+  private pgs: PgsRenderer | null = null;
+  private pgsCanvas: HTMLCanvasElement | null = null;
+
+  // Selectable sidecar / embedded subtitles handed in by the screen.
+  private subs: PlayerSubtitle[] = [];
+  // Currently-mounted <track> id (null = subtitles off).
+  private activeSubId: string | null = null;
+
+  // Event fan-out. Keyed by PlayerEvent; each value is a Set of callbacks.
+  private listeners = new Map<PlayerEvent, Set<(d?: unknown) => void>>();
+  private firstFrameFired = false;
+
+  // Circuit-breaker bookkeeping, mirrored from chino-web's hls ERROR handler.
+  private mediaRecoverCount = 0;
+  private mediaRecoverFirst = 0;
+  private networkRetryCount = 0;
+  private networkRetryFirst = 0;
+
+  attach(el: HTMLElement): void {
+    this.container = el;
+    const v = document.createElement('video');
+    // No `src` attribute — hls.js attaches and drives the source. On a
+    // native-HLS-only runtime we set v.src directly in load().
+    v.className = 'absolute inset-0 w-full h-full bg-black';
+    v.setAttribute('playsinline', '');
+    // crossOrigin matches chino-web — required so <track> cues + any canvas
+    // readback (libpgs) aren't tainted.
+    v.crossOrigin = 'anonymous';
+    v.style.width = '100%';
+    v.style.height = '100%';
+    v.style.objectFit = 'contain';
+    this.bindVideoEvents(v);
+    el.appendChild(v);
+
+    // Canvas sibling for PGS. Positioned over the video; libpgs owns its
+    // draw loop and syncs to the video's timeupdate internally.
+    const canvas = document.createElement('canvas');
+    canvas.style.position = 'absolute';
+    canvas.style.inset = '0';
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    canvas.style.pointerEvents = 'none';
+    el.appendChild(canvas);
+    this.pgsCanvas = canvas;
+
+    this.video = v;
+  }
+
+  async load(url: string, o?: LoadOptions): Promise<void> {
+    const v = this.video;
+    if (!v || !url) return;
+    const startSec = o?.startSec ?? 0;
+    this.firstFrameFired = false;
+    this.emit('buffering');
+
+    // Seek-to-resume once metadata lands. Bound once per load; AVPlay-style
+    // resume parity (chino-web stashes the value in pendingSeekRef and
+    // replays it from onLoadedMetadata).
+    const onMeta = () => {
+      this.emit('ready', { duration: this.duration() });
+      if (startSec > 1 && isFinite(v.duration) && v.duration > 0) {
+        try { v.currentTime = Math.min(startSec, v.duration - 1); } catch { /* ignore */ }
+      }
+      v.removeEventListener('loadedmetadata', onMeta);
+    };
+    v.addEventListener('loadedmetadata', onMeta);
+
+    // Tear down any prior hls instance (quality switch / reload reuses the
+    // same engine instance and calls load() again).
+    if (this.hls) {
+      this.hls.destroy();
+      this.hls = null;
+    }
+
+    // Prefer hls.js (MSE) over native HLS — Chrome's canPlayType for the
+    // HLS MIME returns "maybe" but doesn't actually decode the playlist.
+    // Fall back to native HLS only when hls.js isn't supported AND the UA
+    // reports it can play HLS (Safari / iOS / some TV WebKits).
+    if (!Hls.isSupported()) {
+      if (v.canPlayType('application/vnd.apple.mpegurl')) {
+        v.src = url;
+        return;
+      }
+      this.emit('error', { message: 'No HLS support: hls.js unsupported and no native HLS.' });
+      return;
+    }
+
+    // hls.js config copied from chino-web PlayerPage: a generous buffer to
+    // ride out WiFi roams / brief upstream stalls / a chino-stream pod
+    // restart, bounded by a 500 MB memory cap, plus bumped retry counts for
+    // the HPA fan-out (segments may briefly 502 while a pod restarts).
+    const hls = new Hls({
+      maxBufferLength: 300,
+      maxMaxBufferLength: 600,
+      maxBufferSize: 500 * 1000 * 1000,
+      backBufferLength: 60,
+      manifestLoadingRetryDelay: 1000,
+      manifestLoadingMaxRetry: 4,
+      fragLoadingRetryDelay: 1000,
+      fragLoadingMaxRetry: 6,
+    });
+    hls.attachMedia(v);
+    hls.on(Hls.Events.MEDIA_ATTACHED, () => hls.loadSource(url));
+
+    // Circuit-breaker error handling, mirrored from chino-web. Without it a
+    // chronic codec / MSE-append error sends recoverMediaError into a hot
+    // loop that hammers master.m3u8 dozens of times per second.
+    this.mediaRecoverCount = 0;
+    this.mediaRecoverFirst = 0;
+    this.networkRetryCount = 0;
+    this.networkRetryFirst = 0;
+    hls.on(Hls.Events.ERROR, (_evt, data) => {
+      if (!data.fatal) {
+        // bufferAppendError is a permanent failure for this src — Chrome
+        // rejects the MSE append and hls.js retries forever without firing
+        // fatal. Promote it to fatal so the breaker can act.
+        if (data.details === 'bufferAppendError' || data.details === 'bufferAppendingError') {
+          (data as { fatal?: boolean }).fatal = true;
+        } else {
+          return;
+        }
+      }
+      const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      const techDetail = [
+        'hls.js fatal error',
+        `type: ${data.type}`,
+        `details: ${data.details}`,
+        data.reason ? `reason: ${data.reason}` : '',
+      ].filter(Boolean).join('\n');
+      switch (data.type) {
+        case Hls.ErrorTypes.NETWORK_ERROR:
+          if (now - this.networkRetryFirst > 10_000) {
+            this.networkRetryCount = 0;
+            this.networkRetryFirst = now;
+          }
+          this.networkRetryCount += 1;
+          if (this.networkRetryCount > 3) {
+            hls.destroy();
+            this.emit('error', { message: 'Stream unreachable — check your connection.', tech: techDetail });
+            return;
+          }
+          hls.startLoad();
+          break;
+        case Hls.ErrorTypes.MEDIA_ERROR:
+          if (now - this.mediaRecoverFirst > 10_000) {
+            this.mediaRecoverCount = 0;
+            this.mediaRecoverFirst = now;
+          }
+          this.mediaRecoverCount += 1;
+          if (this.mediaRecoverCount > 3) {
+            hls.destroy();
+            // On the TV the upstream owns the transcode-fallback decision
+            // (re-load with a different ?q= / forced transcode). We surface
+            // a decode error and let the screen decide whether to retry.
+            this.emit('error', { message: 'Playback failed — this file could not be decoded.', tech: techDetail });
+            return;
+          }
+          hls.recoverMediaError();
+          break;
+        default:
+          hls.destroy();
+          this.emit('error', { message: 'Playback failed unexpectedly.', tech: techDetail });
+      }
+    });
+
+    this.hls = hls;
+    // Re-mount any active subtitle now that a fresh source is loading (a
+    // quality-switch reload drops the old <track>).
+    this.applySubtitle();
+  }
+
+  play(): void {
+    this.video?.play().catch(() => undefined);
+  }
+
+  pause(): void {
+    this.video?.pause();
+  }
+
+  togglePlay(): void {
+    const v = this.video;
+    if (!v) return;
+    if (v.paused) v.play().catch(() => undefined);
+    else v.pause();
+  }
+
+  seek(sec: number): void {
+    const v = this.video;
+    if (!v) return;
+    const dur = this.duration();
+    const clamped = Math.max(0, dur > 0 ? Math.min(dur, sec) : sec);
+    try { v.currentTime = clamped; } catch { /* ignore */ }
+  }
+
+  currentTime(): number {
+    return this.video?.currentTime ?? 0;
+  }
+
+  duration(): number {
+    const d = this.video?.duration ?? 0;
+    return isFinite(d) && d > 0 ? d : 0;
+  }
+
+  setQuality(id: string): void {
+    // Our master playlist is single-variant per ?q=, so a real quality
+    // change is a master-URL reload the screen drives. When the manifest
+    // DOES carry multiple levels (e.g. a packaged multi-rendition item),
+    // steer hls.js's level: 'auto'/'-1' → ABR, a numeric string → that level.
+    const hls = this.hls;
+    if (!hls) return;
+    if (id === 'auto' || id === '-1') {
+      hls.currentLevel = -1;
+      return;
+    }
+    const n = Number(id);
+    if (Number.isInteger(n) && n >= 0 && n < hls.levels.length) {
+      hls.currentLevel = n;
+    }
+  }
+
+  audioTracks(): PlayerAudioTrack[] {
+    const hls = this.hls;
+    if (!hls || !hls.audioTracks?.length) return [];
+    return hls.audioTracks.map((t, i) => ({
+      id: String(t.id ?? i),
+      label: t.name || t.lang || `Track ${i + 1}`,
+    }));
+  }
+
+  setAudioTrack(id: string): void {
+    const hls = this.hls;
+    if (!hls || !hls.audioTracks?.length) return;
+    const idx = hls.audioTracks.findIndex((t, i) => String(t.id ?? i) === id);
+    if (idx >= 0) hls.audioTrack = idx;
+  }
+
+  textTracks(): PlayerTextTrack[] {
+    // Selectable subtitles come from the screen-supplied sidecar list, not
+    // from hls.js's in-manifest text tracks (our streams carry subtitles as
+    // sidecars / embedded VTT proxied per chino-api router).
+    return this.subs.map((s) => ({ id: s.id, label: s.label }));
+  }
+
+  setTextTrack(id: string | null): void {
+    this.activeSubId = id;
+    this.applySubtitle();
+  }
+
+  // SubtitleCapableEngine — screen replaces the selectable set (e.g. after
+  // /subtitles + /play/info merge). Mirrors chino-web's mergedSubs feeding
+  // the switcher.
+  setSubtitles(subs: PlayerSubtitle[]): void {
+    this.subs = subs.filter((s) => {
+      const fmt = (s.format || '').toLowerCase();
+      // Keep PGS (libpgs renders it) and all text formats; drop the
+      // unrenderable bitmap codecs.
+      return fmt === 'pgs' || !BITMAP_FORMATS.has(fmt);
+    });
+    // Re-assert whatever is currently selected against the new list.
+    if (this.activeSubId && !this.subs.some((s) => s.id === this.activeSubId)) {
+      this.activeSubId = null;
+    }
+    this.applySubtitle();
+  }
+
+  on(ev: PlayerEvent, cb: (d?: unknown) => void): () => void {
+    let set = this.listeners.get(ev);
+    if (!set) {
+      set = new Set();
+      this.listeners.set(ev, set);
+    }
+    set.add(cb);
+    return () => set!.delete(cb);
+  }
+
+  destroy(): void {
+    if (this.hls) {
+      this.hls.destroy();
+      this.hls = null;
+    }
+    this.disposePgs();
+    const v = this.video;
+    if (v) {
+      try {
+        v.pause();
+        v.removeAttribute('src');
+        v.load();
+      } catch { /* ignore */ }
+      v.remove();
+    }
+    this.pgsCanvas?.remove();
+    this.pgsCanvas = null;
+    this.video = null;
+    this.container = null;
+    this.listeners.clear();
+  }
+
+  // ---- internals ----
+
+  private emit(ev: PlayerEvent, d?: unknown): void {
+    const set = this.listeners.get(ev);
+    if (!set) return;
+    for (const cb of set) {
+      try { cb(d); } catch { /* a listener throwing must not break the engine */ }
+    }
+  }
+
+  private bindVideoEvents(v: HTMLVideoElement): void {
+    v.addEventListener('playing', () => {
+      this.emit('playing');
+      if (!this.firstFrameFired) {
+        this.firstFrameFired = true;
+        this.emit('firstframe');
+      }
+    });
+    v.addEventListener('pause', () => this.emit('paused'));
+    v.addEventListener('timeupdate', () => this.emit('timeupdate', v.currentTime));
+    v.addEventListener('ended', () => this.emit('ended'));
+    v.addEventListener('waiting', () => this.emit('buffering'));
+    v.addEventListener('canplay', () => {
+      // Pair with onPause stall recovery (chino-web): once data is back,
+      // clear buffering. firstframe also fires here for the native-HLS path,
+      // which may not emit 'playing' before the first paint.
+      this.emit('playing');
+      if (!this.firstFrameFired && v.readyState >= 2) {
+        this.firstFrameFired = true;
+        this.emit('firstframe');
+      }
+    });
+    v.addEventListener('error', () => {
+      const e = v.error;
+      this.emit('error', { message: e?.message || 'Media error', code: e?.code });
+    });
+  }
+
+  // Mount / unmount the active subtitle. Text tracks ride a native <track>
+  // (mode="showing"); PGS rides the libpgs canvas overlay. Only ever one
+  // active at a time on the TV (no dual-subtitle on a 10-foot UI).
+  private applySubtitle(): void {
+    const v = this.video;
+    if (!v) return;
+
+    // Remove every previously-mounted <track> so we don't leave stale cue
+    // lists behind (and so Chrome doesn't prefetch tracks we're not showing).
+    for (const trackEl of Array.from(v.querySelectorAll('track'))) {
+      trackEl.remove();
+    }
+
+    const active = this.activeSubId
+      ? this.subs.find((s) => s.id === this.activeSubId) ?? null
+      : null;
+
+    // PGS path — (re)create the libpgs renderer for the active PGS track,
+    // tear it down otherwise.
+    if (active && (active.format || '').toLowerCase() === 'pgs') {
+      this.mountPgs(active);
+      return;
+    }
+    this.disposePgs();
+
+    // Text path — mount a single native <track mode="showing">. We re-anchor
+    // cues above the chrome the same way chino-web does (line 85 from top).
+    if (active) {
+      const track = document.createElement('track');
+      track.id = active.id;
+      track.kind = 'subtitles';
+      track.src = active.url;
+      track.srclang = active.lang;
+      track.label = active.label;
+      v.appendChild(track);
+      // The <track> element's TextTrack appears asynchronously; flip it to
+      // showing once it's available and lift cues out of the controls zone.
+      const showAndLift = () => {
+        for (const t of Array.from(v.querySelectorAll('track'))) {
+          const tt = (t as HTMLTrackElement).track;
+          if (!tt) continue;
+          tt.mode = t.id === active.id ? 'showing' : 'disabled';
+          const cues = tt.cues;
+          if (cues) {
+            for (let i = 0; i < cues.length; i++) {
+              const c = cues[i] as VTTCue;
+              if (c.line === 'auto') {
+                c.snapToLines = false;
+                c.line = 85;
+              }
+            }
+          }
+        }
+      };
+      track.addEventListener('load', showAndLift);
+      // Also reassert on the textTracks addtrack event (some UAs surface the
+      // track before the load event).
+      const onAdd = () => showAndLift();
+      v.textTracks.addEventListener('addtrack', onAdd, { once: true });
+      showAndLift();
+    }
+  }
+
+  private mountPgs(sub: PlayerSubtitle): void {
+    const v = this.video;
+    const canvas = this.pgsCanvas;
+    if (!v || !canvas) return;
+    // Dispose any prior renderer (terminating its worker) before creating
+    // the next — only one renderer is ever alive. libpgs's worker mode
+    // transfers the canvas (one-way), so we recreate the canvas node to
+    // avoid InvalidStateError on a re-mount.
+    this.disposePgs();
+    const fresh = canvas.cloneNode(false) as HTMLCanvasElement;
+    canvas.replaceWith(fresh);
+    this.pgsCanvas = fresh;
+    this.pgs = new PgsRenderer({
+      video: v,
+      canvas: fresh,
+      subUrl: sub.url,
+      workerUrl: libpgsWorkerUrl,
+      aspectRatio: 'contain',
+    });
+  }
+
+  private disposePgs(): void {
+    if (this.pgs) {
+      try { this.pgs.dispose(); } catch { /* ignore */ }
+      this.pgs = null;
+    }
+  }
+}

@@ -1,0 +1,12 @@
+node_modules
+dist
+.buildResult
+*.wgt
+.tizen-cli-history
+.DS_Store
+.playwright-cli/
+*.keystore
+*.jks
+*.p12
+local.properties
+signing.properties

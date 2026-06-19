@@ -1,0 +1,3 @@
+[submodule "vendor/chino-web"]
+	path = vendor/chino-web
+	url = https://github.com/zaentrum/chino-web.git
