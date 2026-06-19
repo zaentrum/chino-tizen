@@ -62,11 +62,28 @@ jobs:
           path: dist
           retention-days: 7
 
+  # Secret presence as a job output (the `secrets` context is NOT allowed in a
+  # job-level `if:`, so read it in a step and gate package-wgt on the output).
+  check-secrets:
+    runs-on: ubuntu-latest
+    outputs:
+      has_cert: ${{ steps.check.outputs.has_cert }}
+    steps:
+      - id: check
+        env:
+          TIZEN_AUTHOR_CERT_B64: ${{ secrets.TIZEN_AUTHOR_CERT_B64 }}
+        run: |
+          if [ -n "$TIZEN_AUTHOR_CERT_B64" ]; then
+            echo "has_cert=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_cert=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # Signed .wgt packaging. GUARDED on the author-certificate secret: when it is
   # absent (forks, PRs without secrets) the whole job is skipped — never failed.
   package-wgt:
-    needs: [build, neutrality]
-    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && secrets.TIZEN_AUTHOR_CERT_B64 != '' }}
+    needs: [build, neutrality, check-secrets]
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && needs.check-secrets.outputs.has_cert == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
