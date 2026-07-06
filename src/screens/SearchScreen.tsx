@@ -335,7 +335,7 @@ function SearchMessage({
 }): JSX.Element {
   return (
     <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 text-center">
-      <p className={`text-2xl font-semibold ${isError ? 'text-[#FF7B72]' : 'text-text'}`}>{headline}</p>
+      <p className={`text-2xl font-semibold ${isError ? 'text-red' : 'text-text'}`}>{headline}</p>
       {hint ? <p className="text-muted">{hint}</p> : null}
     </div>
   );

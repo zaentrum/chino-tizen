@@ -87,7 +87,7 @@ export default function PersonScreen(): JSX.Element {
           {state.kind === 'loading' ? <Spinner label="Loading…" fullscreen={false} /> : null}
           {state.kind === 'error' ? (
             <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 text-center">
-              <p className="text-2xl font-semibold text-[#FF7B72]">Couldn’t load person</p>
+              <p className="text-2xl font-semibold text-red">Couldn’t load person</p>
               <p className="text-muted">{state.message}</p>
             </div>
           ) : null}

@@ -474,7 +474,7 @@ function Hero({
           type="button"
           data-focused={play.focused}
           className={`flex items-center gap-2 rounded-lg px-6 py-3 text-lg font-semibold text-white outline-none transition-colors ${
-            play.focused ? 'bg-[#79C0FF]' : 'bg-accent'
+            play.focused ? 'bg-accent' : 'bg-accent'
           }`}
         >
           <Play className="h-5 w-5" />

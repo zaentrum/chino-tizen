@@ -24,7 +24,7 @@ const VARIANT: Record<NonNullable<ButtonProps['variant']>, string> = {
   // Resting + focused colours. The focus ring itself comes from data-focused;
   // these only set the fill so the focused state reads at 10ft (brighter blue
   // / lighter surface), matching the androidtv Button focusedContainerColor.
-  primary: 'bg-accent text-bg data-[focused=true]:bg-[#79C0FF]',
+  primary: 'bg-accent text-bg data-[focused=true]:bg-accent',
   secondary:
     'bg-surface-2 text-text data-[focused=true]:bg-border-2',
   ghost:

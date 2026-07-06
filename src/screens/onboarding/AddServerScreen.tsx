@@ -101,7 +101,7 @@ export default function AddServerScreen({ onCancel, changeServer }: AddServerScr
 
         {probing ? <OnboardingSpinner /> : null}
 
-        {error ? <p className="text-center text-[#DA3633]">{error}</p> : null}
+        {error ? <p className="text-center text-red">{error}</p> : null}
 
         {recents.length > 0 ? (
           <div className="flex w-full flex-col items-start gap-2">

@@ -179,7 +179,7 @@ export default function AddToListPicker({
             </ul>
           )}
 
-          {error ? <p className="px-6 py-2 text-sm text-[#DA3633]">{error}</p> : null}
+          {error ? <p className="px-6 py-2 text-sm text-red">{error}</p> : null}
         </div>
       </div>
 

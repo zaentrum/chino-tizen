@@ -535,7 +535,7 @@ function ReportProblemDialog({ onClose }: { onClose: () => void }): JSX.Element 
       </p>
       <p
         className={`px-5 pb-2 text-base ${
-          status.phase === 'failed' ? 'text-[#F85149]' : 'text-muted'
+          status.phase === 'failed' ? 'text-red' : 'text-muted'
         }`}
       >
         {status.phase === 'failed'

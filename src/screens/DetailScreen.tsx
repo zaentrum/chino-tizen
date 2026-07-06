@@ -353,7 +353,7 @@ export default function DetailScreen({ id }: DetailScreenProps): JSX.Element {
   if (loading) return <Spinner label="Loading…" />;
   if (error || !item) {
     return (
-      <div className="flex min-h-screen w-full items-center justify-center bg-bg p-16 text-center text-[#FF7B72]">
+      <div className="flex min-h-screen w-full items-center justify-center bg-bg p-16 text-center text-red">
         Could not load this title{error ? `: ${error}` : ''}.
       </div>
     );
@@ -464,7 +464,7 @@ export default function DetailScreen({ id }: DetailScreenProps): JSX.Element {
             </div>
 
             {item.description ? (
-              <p className="mt-2 max-w-3xl whitespace-pre-line leading-relaxed text-[#c9d1d9]">
+              <p className="mt-2 max-w-3xl whitespace-pre-line leading-relaxed text-text">
                 {item.description}
               </p>
             ) : (
@@ -510,7 +510,7 @@ function PrimaryAction({
     <div
       ref={ref}
       data-focused={focused}
-      className="inline-flex cursor-default select-none items-center gap-2 rounded-full bg-accent px-6 py-3 text-xl font-semibold text-bg data-[focused=true]:bg-[#79C0FF]"
+      className="inline-flex cursor-default select-none items-center gap-2 rounded-full bg-accent px-6 py-3 text-xl font-semibold text-bg data-[focused=true]:bg-accent"
     >
       <Play className="h-5 w-5 fill-current" />
       {label}
@@ -600,7 +600,7 @@ function MetaRow({
     );
   }
   return (
-    <div className="flex flex-wrap items-center gap-3 text-base text-[#c9d1d9]">
+    <div className="flex flex-wrap items-center gap-3 text-base text-text">
       {parts.map((p, i) => (
         <span key={p.key} className="inline-flex items-center gap-3">
           {i > 0 ? <span className="text-muted">•</span> : null}
@@ -642,7 +642,7 @@ function FooterColumn({ header, value }: { header: string; value: string }): JSX
   return (
     <div className="flex flex-col gap-0.5">
       <span className="text-muted">{header}</span>
-      <span className="text-[#c9d1d9]">{value}</span>
+      <span className="text-text">{value}</span>
     </div>
   );
 }
@@ -691,7 +691,7 @@ function CastCard({ member }: { member: CastEntry }): JSX.Element {
         focused ? 'bg-surface-2' : ''
       }`}
     >
-      <div className="flex h-20 w-20 items-center justify-center rounded-full bg-surface text-2xl font-semibold text-[#c9d1d9]">
+      <div className="flex h-20 w-20 items-center justify-center rounded-full bg-surface text-2xl font-semibold text-text">
         {initialsOf(member.name)}
       </div>
       <span className="line-clamp-2 text-center text-sm font-medium text-white">{member.name}</span>
@@ -825,7 +825,7 @@ function EpisodeRow({
             {mins > 0 ? <span className="shrink-0 text-sm text-muted">{mins}m</span> : null}
           </div>
           {episode.description ? (
-            <p className="line-clamp-2 text-sm text-[#c9d1d9]">{episode.description}</p>
+            <p className="line-clamp-2 text-sm text-text">{episode.description}</p>
           ) : null}
         </div>
       </div>

@@ -46,7 +46,7 @@ export function FocusButton({
         full ? 'w-full' : '',
         disabled ? 'cursor-default opacity-50' : '',
         variant === 'danger'
-          ? 'border-[#DA3633] bg-[#DA3633]/20 text-[#FF7B72]'
+          ? 'border-red bg-red/20 text-red'
           : 'border-border-2 bg-surface-2 text-text',
       ].join(' ')}
     >

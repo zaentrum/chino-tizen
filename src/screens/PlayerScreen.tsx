@@ -1203,7 +1203,7 @@ function ErrorScreen({ message }: { message: string }): JSX.Element {
   });
   return (
     <div className="flex h-screen w-full flex-col items-center justify-center gap-6 bg-black px-16 text-center">
-      <Loader2 className="h-10 w-10 text-[#FF7B72]" aria-hidden />
+      <Loader2 className="h-10 w-10 text-red" aria-hidden />
       <p className="text-2xl font-semibold text-white">Playback failed</p>
       <p className="max-w-2xl text-lg text-muted">{message}</p>
       <div

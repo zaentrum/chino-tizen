@@ -128,7 +128,7 @@ export default function DeviceCodeScreen(): JSX.Element {
 
         {state.phase === 'error' ? (
           <div className="flex flex-col items-center gap-4">
-            <p className="max-w-xl text-center text-[#DA3633]">{state.message}</p>
+            <p className="max-w-xl text-center text-red">{state.message}</p>
             <FocusButton onEnter={() => setAttempt((n) => n + 1)} autoFocus>
               Try again
             </FocusButton>

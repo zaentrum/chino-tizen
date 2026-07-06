@@ -238,7 +238,7 @@ function HubView({
         <NewListChip onEnter={onNewList} autoFocus={entries.length === 0} />
       </div>
 
-      {error ? <p className="mb-4 text-[#DA3633]">{error}</p> : null}
+      {error ? <p className="mb-4 text-red">{error}</p> : null}
 
       {entries.length === 0 ? (
         <p className="mt-8 text-muted">
@@ -463,7 +463,7 @@ function HeaderAction({
       aria-label={label}
       className={`inline-flex cursor-default select-none items-center gap-2 rounded-full px-4 py-2 text-base transition-colors ${
         focused ? 'bg-surface-2' : 'bg-surface'
-      } ${danger ? 'text-[#DA3633]' : 'text-text'}`}
+      } ${danger ? 'text-red' : 'text-text'}`}
     >
       {icon}
       <span>{label}</span>

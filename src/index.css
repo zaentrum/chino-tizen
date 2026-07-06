@@ -16,8 +16,21 @@ body,
 }
 
 body {
-  background: #0d1117;
+  background: #0b0f19;
+  color: #e6e6e6;
+  font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
   cursor: none; /* TV has no pointer */
+}
+
+/* Terminal display type for headings (@nalet/design-system). */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  letter-spacing: -0.015em;
 }
 
 /* Hide scrollbars — navigation is D-pad driven, not scroll. */
@@ -37,5 +50,5 @@ body {
 :focus-visible {
   outline: 3px solid #58a6ff;
   outline-offset: 2px;
-  border-radius: 0.5rem;
+  border-radius: 0;
 }
