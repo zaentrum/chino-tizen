@@ -9,7 +9,7 @@
 //
 // We follow chino-web's hook types (useItems / useItem / usePeople /
 // useWatchlists) for the shapes the UI actually consumes, and keep the
-// extra fields chino-web carries (watched_at, sort_title, series_title,
+// extra fields chino-web carries (watched_at, sort_title, and series_title +
 // position/duration on continue-watching rows) so screens have the same
 // data the reference client does.
 
@@ -89,12 +89,19 @@ export interface Item {
   // contract's convenience boolean; the client derives it from watched_at.
   watched_at?: string | null;
   watched?: boolean;
+}
 
-  // Continue-watching enrichment: resume position + the row's authoritative
-  // timeline length, plus the parent series title for episode rows. `up_next`
-  // marks a substituted "next episode" card (no real in-progress position).
-  position_sec?: number;
-  duration_sec?: number;
+/**
+ * A row of GET /me/continue-watching: an Item plus the user's saved position
+ * (chino-api/internal/http/continue_watching.go). Only this feed carries a
+ * position — GET /items/{id} does not; the player reads GET
+ * /items/{id}/progress. `duration_sec` is the timeline length the player
+ * reported (0 when it never did); `up_next` marks a next-episode card the
+ * server substituted for a finished one (position 0, nothing to resume).
+ */
+export interface ContinueWatchingItem extends Item {
+  position_sec: number;
+  duration_sec: number;
   series_title?: string;
   up_next?: boolean;
 }

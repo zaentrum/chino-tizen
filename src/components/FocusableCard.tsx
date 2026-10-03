@@ -6,12 +6,13 @@
 // an episode "SxxExx · title" meta line for episodes. Focus scales the card up
 // slightly and renders the ring via data-focused.
 import { Check, Image as ImageIcon } from 'lucide-react';
-import type { Item } from '@/api/types';
+import type { ContinueWatchingItem, Item } from '@/api/types';
 import { api } from '@/api/instance';
 import { useFocusable } from '@/tv/focus';
 
 interface FocusableCardProps {
-  item: Item;
+  /** A catalogue item, or a continue-watching row (which carries a position). */
+  item: Item | ContinueWatchingItem;
   onEnter: () => void;
   /** Optional stream token so the poster URL is authorised (api.posterUrl). */
   streamToken?: string;
@@ -21,12 +22,18 @@ interface FocusableCardProps {
   onFocus?: () => void;
 }
 
-/** position_sec / duration_ms → 0..100 percent, or null when not in progress. */
-function progressPct(item: Item): number | null {
-  if (item.position_sec == null || item.position_sec <= 0) return null;
-  const durSec = item.duration_ms ? item.duration_ms / 1000 : 0;
+/** A continue-watching row's position as 0..100 percent, or null when nothing
+ *  is in progress (a plain item, or a Next Up card). The row's duration_sec is
+ *  the timeline the player reported (chino-web divides by it too); the
+ *  catalogue runtime stands in when it never reported one. */
+function progressPct(item: Item | ContinueWatchingItem): number | null {
+  if (!('position_sec' in item) || item.up_next) return null;
+  const pos = item.position_sec;
+  if (!(pos > 0)) return null;
+  const durSec =
+    item.duration_sec > 0 ? item.duration_sec : item.duration_ms ? item.duration_ms / 1000 : 0;
   if (durSec <= 0) return null;
-  return Math.min(100, Math.max(0, (item.position_sec / durSec) * 100));
+  return Math.min(100, Math.max(0, (pos / durSec) * 100));
 }
 
 export function FocusableCard({

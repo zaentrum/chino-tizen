@@ -29,7 +29,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Play, Info, Image as ImageIcon } from 'lucide-react';
-import type { Item } from '@/api/types';
+import type { ContinueWatchingItem, Item } from '@/api/types';
 import { api } from '@/api/instance';
 import { useFocusable, useRemoteKey } from '@/tv/focus';
 import { TVKey } from '@/tv/keys';
@@ -62,7 +62,7 @@ interface HomeData {
   heroPool: Item[];
   /** Random start index so a refresh doesn't always foreground the same hero. */
   heroStart: number;
-  continueWatching: Item[];
+  continueWatching: ContinueWatchingItem[];
   recentMovies: Item[];
   recentSeries: Item[];
   topRated: Item[];
@@ -143,7 +143,7 @@ export default function HomeScreen(): JSX.Element {
             })
             .then((r) => r.items)
             .catch(() => [] as Item[]),
-          api.continueWatching().catch(() => [] as Item[]),
+          api.continueWatching().catch(() => [] as ContinueWatchingItem[]),
           // Hero pool: top-rated movies (rating>=7) so the carousel always
           // foregrounds something good. Fall back below to recent items.
           api

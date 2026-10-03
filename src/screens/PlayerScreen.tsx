@@ -35,6 +35,12 @@ import type { Item, PlayInfo, Segment } from '@/api/types';
 import { api } from '@/api/instance';
 import { authStore } from '@/auth/session';
 import { createPlayer, detectCaps, type ChinoPlayer } from '@/player';
+import {
+  createProgressGuard,
+  mayWriteProgress,
+  resumeStartSec,
+  type ProgressGuard,
+} from '@/lib/progress';
 import { useFocusable, useRemoteKey } from '@/tv/focus';
 import { TVKey } from '@/tv/keys';
 import { navigate, back, useRoute } from '@/router';
@@ -62,10 +68,6 @@ const PROGRESS_INTERVAL_MS = 10_000;
 /** Mark watched at this fraction of the runtime when there's no credits
  *  segment to trigger it first (web parity, p95). */
 const WATCHED_THRESHOLD = 0.95;
-
-/** A resume position below this is treated as "start from the head" — both
- *  references ignore a few-second scrub so the player doesn't jump 0:03 in. */
-const RESUME_FLOOR_SEC = 30;
 
 /* ─────────────────────────  Trickplay (scrub preview)  ───────────────────
  * Faithful port of chino-web's lib/trickplay (parseTrickplayVTT /
@@ -287,14 +289,20 @@ export default function PlayerScreen(): JSX.Element {
 
   // Refs the engine-event closures + intervals read so they aren't stale (the
   // listeners register once with []-deps).
-  const currentRef = useRef(0);
   const durationRef = useRef(0);
-  useEffect(() => {
-    currentRef.current = current;
-  }, [current]);
   useEffect(() => {
     durationRef.current = effectiveDuration;
   }, [effectiveDuration]);
+
+  // The resume position this session may write back (see @/lib/progress): fed
+  // only from engine time updates while playing, never from the optimistic
+  // `current` a seek sets. Null until the saved position has been read, so a
+  // teardown before then writes nothing.
+  const guardRef = useRef<ProgressGuard | null>(null);
+  // Engine time updates count as "played to" from the first frame on and not
+  // while paused (hls.js reports a seek made while paused as a time update).
+  const firstFrameRef = useRef(false);
+  const pausedRef = useRef(false);
 
   /* ── Force the document to pure black while mounted so any sliver around the
      stage shows black, not the shell's #0D1117. Mirrors chino-web. ── */
@@ -316,15 +324,18 @@ export default function PlayerScreen(): JSX.Element {
     };
   }, []);
 
-  /* ── Post the current resume position. Used by the ~10s interval AND once on
+  /* ── Post the resume position. Used by the ~10s interval AND once on
      teardown / BACK. keepalive on the underlying fetch lets the unmount POST
-     survive the navigation. Skips a zero position (never overwrites a real
-     resume point with 0:00 from a stream that hasn't started). ── */
+     survive the navigation. The position is the last second this session
+     PLAYED to (the guard's) — never the head of a stream whose resume seek has
+     not landed, never a seek target playback has not reached, never anything
+     when the saved position could not be read. chino-api keeps one position
+     per user, so a wrong write here loses the viewer's place everywhere. ── */
   const postProgressNow = useCallback(() => {
-    const pos = Math.floor(currentRef.current);
+    const pos = guardRef.current?.position() ?? null;
+    if (!itemId || pos == null) return;
     const dur = Math.floor(durationRef.current);
-    if (!itemId || pos <= 0) return;
-    void api.postProgress(itemId, pos, dur).catch(() => undefined);
+    void api.postProgress(itemId, pos, dur > 0 ? dur : 0).catch(() => undefined);
   }, [itemId]);
 
   /* ── Mount: fetch item + play info + stream token in parallel, build the
@@ -376,17 +387,26 @@ export default function PlayerScreen(): JSX.Element {
       }
     });
     const offPlaying = player.on('playing', () => {
+      pausedRef.current = false;
       setPlaying(true);
       setBuffering(false);
     });
-    const offPaused = player.on('paused', () => setPlaying(false));
+    const offPaused = player.on('paused', () => {
+      pausedRef.current = true;
+      setPlaying(false);
+    });
     const offBuffering = player.on('buffering', () => setBuffering(true));
     const offFirstFrame = player.on('firstframe', () => {
+      firstFrameRef.current = true;
       setFirstFrame(true);
       setBuffering(false);
     });
     const offTime = player.on('timeupdate', () => {
-      setCurrent(player.currentTime());
+      const t = player.currentTime();
+      setCurrent(t);
+      // The engine's own playhead while playing is the only thing the resume
+      // position is taken from.
+      if (firstFrameRef.current && !pausedRef.current) guardRef.current?.played(t);
       // Duration can resolve after the first frame on fragmented streams.
       const d = player.duration();
       if (d > 0) setDuration(d);
@@ -401,10 +421,13 @@ export default function PlayerScreen(): JSX.Element {
 
     void (async () => {
       try {
-        const [loadedItem, info, token] = await Promise.all([
+        // The saved position comes from GET /items/{id}/progress — the item
+        // payload carries none. null = it could not be read.
+        const [loadedItem, info, token, savedSec] = await Promise.all([
           api.getItem(itemId),
           api.playInfo(itemId, caps).catch(() => null),
           api.streamToken(),
+          api.getProgress(itemId).catch(() => null),
         ]);
         if (cancelled) return;
         setItem(loadedItem);
@@ -416,18 +439,22 @@ export default function PlayerScreen(): JSX.Element {
         qualityRef.current = resolvedQuality;
 
         // Resolve the resume point (web/androidtv: auto-resume, no dialog):
-        //   - ?startover=1 → always head;
-        //   - ?resume=<sec> (Zap channel-surf handoff) wins when > floor;
-        //   - else the item's saved position when > floor;
-        //   - else the head.
-        const savedPos = loadedItem.position_sec ?? 0;
-        const startSec = startover
-          ? 0
-          : resumeFromQuery > RESUME_FLOOR_SEC
-            ? resumeFromQuery
-            : savedPos > RESUME_FLOOR_SEC
-              ? savedPos
-              : 0;
+        // ?startover=1 → the head; ?resume=<sec> (Zap hand-off) → exactly
+        // there; else the saved position unless barely started or finished.
+        // The finished test wants the real runtime: /play/info's, else the
+        // catalogue's.
+        const resume = {
+          savedSec,
+          durationSec: (info?.duration_ms || loadedItem.duration_ms || 0) / 1000,
+          startover,
+          handoffSec: resumeFromQuery,
+        };
+        const startSec = resumeStartSec(resume);
+        // Arm the write guard before the stream starts: the head of the
+        // stream, reported before the resume seek lands, must never be saved.
+        const guard = createProgressGuard({ writable: mayWriteProgress(resume) });
+        guard.expectSeek(startSec);
+        guardRef.current = guard;
 
         const url = api.masterUrl(itemId, {
           streamToken: token,
@@ -469,8 +496,9 @@ export default function PlayerScreen(): JSX.Element {
       playerRef.current = null;
     };
     // Mount-once: the player + listeners are reused across the play session.
-    // itemId is stable for one mount (a new id remounts the screen via the
-    // route key). settings is read for the initial preferred-sub pick only.
+    // itemId is stable for one mount (App keys the screen by the item id, so
+    // a new id is a fresh mount with fresh refs). settings is read for the
+    // initial preferred-sub pick only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itemId]);
 
@@ -528,7 +556,9 @@ export default function PlayerScreen(): JSX.Element {
   const skipSegment = useCallback((seg: Segment) => {
     const p = playerRef.current;
     if (!p) return;
-    p.seek(seg.end_ms / 1000 + 0.25);
+    const target = seg.end_ms / 1000 + 0.25;
+    guardRef.current?.expectSeek(target);
+    p.seek(target);
   }, []);
 
   /* ── Auto-skip countdown. Arms when the playhead enters an intro/credits
@@ -619,6 +649,9 @@ export default function PlayerScreen(): JSX.Element {
       caps: capsRef.current,
     });
     setBuffering(true);
+    // The reload restarts at the head and seeks back to `pos`; until it gets
+    // there the last played position stands.
+    guardRef.current?.expectSeek(pos);
     void p.load(url, { startSec: pos > 0 ? pos : undefined });
   }, [itemId]);
 
@@ -633,6 +666,9 @@ export default function PlayerScreen(): JSX.Element {
     const dur = durationRef.current;
     const target = p.currentTime() + delta;
     const clamped = Math.max(0, dur > 0 ? Math.min(target, dur) : target);
+    // `current` moves at once so the scrub bar follows the remote; the resume
+    // position waits until playback reports it got there.
+    guardRef.current?.expectSeek(clamped);
     p.seek(clamped);
     setCurrent(clamped);
   }, []);

@@ -17,5 +17,8 @@
       "@web/*": ["vendor/chino-web/src/*"]
     }
   },
-  "include": ["src"]
+  "include": ["src"],
+  // Unit tests run under node --test (Node strips the types), not in the
+  // app's program.
+  "exclude": ["src/**/*.test.ts"]
 }

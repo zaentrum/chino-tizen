@@ -50,7 +50,10 @@ function MainApp(): JSX.Element {
     case 'zap':
       return <ZapScreen />;
     case 'player':
-      return <PlayerScreen />;
+      // Keyed by the item: the next episode (auto-play, "Next episode") is a
+      // fresh player, not the last one's refs — its resume position, watched
+      // and auto-advance guards would otherwise carry over to the new title.
+      return <PlayerScreen key={params.id} />;
     case 'home':
     default:
       return <HomeScreen />;

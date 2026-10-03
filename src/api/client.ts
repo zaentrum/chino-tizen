@@ -1,5 +1,6 @@
 import type {
   AppConfig,
+  ContinueWatchingItem,
   FeedbackResult,
   Item,
   ListResult,
@@ -187,14 +188,32 @@ export class ChinoClient {
   // Personal state — continue watching, watch flag, progress
   // ---------------------------------------------------------------------------
 
-  /** GET /v1/me/continue-watching — resume rail (in-progress + next-up). */
-  async continueWatching(): Promise<Item[]> {
-    const j = await this.getJSON<{ items?: Item[] }>(`/me/continue-watching`);
+  /** GET /v1/me/continue-watching — resume rail (in-progress + next-up). Wire:
+   *  { items: [Item + position_sec, duration_sec, series_title?, up_next?] }. */
+  async continueWatching(): Promise<ContinueWatchingItem[]> {
+    const j = await this.getJSON<{ items?: ContinueWatchingItem[] }>(`/me/continue-watching`);
     return (j.items ?? []).map(stampWatched);
   }
 
+  /**
+   * GET /v1/items/{id}/progress — the saved resume position, in seconds. Wire:
+   * { position_sec }, 0 when the user never played the item. This is the only
+   * place a title's position comes from (GET /items/{id} carries none). Throws
+   * when it cannot be read, so the player can tell "nothing saved" from
+   * "unknown" and not overwrite a position it never saw.
+   */
+  async getProgress(id: string): Promise<number> {
+    const j = await this.getJSON<{ position_sec?: number }>(
+      `/items/${encodeURIComponent(id)}/progress`,
+    );
+    const pos = j?.position_sec;
+    return typeof pos === 'number' && Number.isFinite(pos) && pos > 0 ? pos : 0;
+  }
+
   /** POST /v1/items/{id}/progress — resume position. Called ~every 10s while
-   *  watching. Body is { position_sec, duration_sec }; 204 on success. */
+   *  watching. Body is { position_sec, duration_sec } in whole seconds (the
+   *  server decodes ints); 204 on success. It overwrites the one position the
+   *  user has on every device, so callers post only what they played to. */
   async postProgress(id: string, positionSec: number, durationSec: number): Promise<void> {
     const r = await fetch(`${this.base()}/v1/items/${encodeURIComponent(id)}/progress`, {
       method: 'POST',
@@ -490,7 +509,7 @@ export class ChinoClient {
 /** chino-api stamps `watched_at`; the UI's convenience boolean is derived
  *  from it (non-null timestamp = watched). Done in one place so every list
  *  surface sees a consistent `watched` flag. */
-function stampWatched(it: Item): Item {
+function stampWatched<T extends Item>(it: T): T {
   return { ...it, watched: it.watched ?? (it.watched_at != null) };
 }
 

@@ -88,18 +88,10 @@ async function fetchSeasons(seriesId: string, signal?: AbortSignal): Promise<Sea
   return (j.seasons ?? []).map((s) => ({ season: s.season, episodes: s.episodes ?? [] }));
 }
 
-/** GET /v1/items/{id}/progress — saved resume position (seconds). */
-async function fetchResumeSec(itemId: string, signal?: AbortSignal): Promise<number> {
-  try {
-    const j = await getJSON<{ position_sec?: number }>(
-      `/items/${encodeURIComponent(itemId)}/progress`,
-      signal,
-    );
-    return typeof j?.position_sec === 'number' ? j.position_sec : 0;
-  } catch {
-    // No saved position (404 on a never-played item) → start fresh.
-    return 0;
-  }
+/** GET /v1/items/{id}/progress — saved resume position (seconds), for the
+ *  Resume label. Unreadable → no Resume button; the player reads it again. */
+async function fetchResumeSec(itemId: string): Promise<number> {
+  return api.getProgress(itemId).catch(() => 0);
 }
 
 /** GET /v1/series/{id}/next-episode — the episode that should play next. */
@@ -216,7 +208,7 @@ export default function DetailScreen({ id }: DetailScreenProps): JSX.Element {
       try {
         const [loaded, resume, sim] = await Promise.all([
           api.getItem(id, 'cast,similar,segments,trailers,subtitles'),
-          fetchResumeSec(id, ctrl.signal),
+          fetchResumeSec(id),
           api.similar(id, 12).catch(() => [] as Item[]),
         ]);
         if (ctrl.signal.aborted) return;

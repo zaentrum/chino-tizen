@@ -166,7 +166,10 @@ export class AvplayEngine implements ChinoPlayer {
   }
 
   play(): void {
-    try { this.api?.play(); } catch { /* ignore */ }
+    try {
+      this.api?.play();
+      this.resumed();
+    } catch { /* ignore */ }
   }
 
   pause(): void {
@@ -179,8 +182,16 @@ export class AvplayEngine implements ChinoPlayer {
     try {
       const state = api.getState();
       if (state === 'PLAYING') { api.pause(); this.emit('paused'); }
-      else { api.play(); }
+      else { api.play(); this.resumed(); }
     } catch { /* ignore */ }
+  }
+
+  // A resume from pause gets no buffering callback (the decoder has its data),
+  // so say 'playing' here — otherwise the screen stays "paused" and stops
+  // saving the resume position after the first pause. Before the first frame
+  // the buffering callbacks report playback themselves.
+  private resumed(): void {
+    if (this.firstFrameFired) this.emit('playing');
   }
 
   seek(sec: number): void {
