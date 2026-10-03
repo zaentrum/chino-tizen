@@ -13,14 +13,29 @@
 // position/duration on continue-watching rows) so screens have the same
 // data the reference client does.
 
-/** A cast or crew credit on an item. `person_id` deep-links to /people/{id}. */
+/**
+ * A cast or crew credit on an item, as katalog-api sends it
+ * (chino-api/internal/katalog/client.go CastEntry): role by role, and within a
+ * role in billing order. `person_id` deep-links to /people/{id}.
+ */
 export interface CastEntry {
   // katalog-api carries the catalogue person id on each credit so the
   // detail page can link the name to the Person surface. Absent for
   // un-linked credits — the UI skips the link in that case.
   person_id?: string;
   name: string;
-  role: string;
+  /** An open token: actor, creator, director, writer, producer, composer,
+   *  cinematographer, editor, or any other (@/lib/credits names them). Empty
+   *  — or absent, from catalogs older than roles — is an actor. */
+  role?: string;
+  /** The job within the role ("Screenplay"). */
+  job?: string;
+  /** The part an actor plays. */
+  character?: string;
+  /** Billing order within the role, 0 first. */
+  order?: number;
+  /** How many episodes of a series the credit covers. */
+  episode_count?: number;
 }
 
 /** A selectable subtitle track. `url` is synthesised by chino-api's

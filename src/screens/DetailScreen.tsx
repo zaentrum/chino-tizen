@@ -2,8 +2,9 @@
 //
 // Layout authority: chino-androidtv ui/detail/DetailScreen.kt (the 10-foot
 // composition — backdrop hero, poster + metadata overlapping it, an action row
-// of Play/Resume + Start-over + Trailer + watchlist/watched circles, a focusable
-// cast & crew shelf, a seasons accordion of episode rows for series, and a
+// of Play/Resume + Start-over + Trailer + watchlist/watched circles, the credits
+// (Starring in billing order with characters, the crew by role — chino-web's),
+// a seasons accordion of episode rows for series, and a
 // "More like this" rail). Data authority: chino-web's DetailPage + its
 // useItem / useSeriesEpisodes / useSimilarItems hooks and chino-api's router.
 //
@@ -34,6 +35,7 @@ import { useFocusable, useRemoteKey } from '@/tv/focus';
 import { TVKey } from '@/tv/keys';
 import { navigate, back } from '@/router';
 import { Spinner } from '@/components/Spinner';
+import { groupCredits } from '@/lib/credits';
 import { languageName } from '@/lib/subtitles';
 
 /** GET /v1/items/{id}/progress — saved resume position (seconds), for the
@@ -451,7 +453,7 @@ export default function DetailScreen({ id }: DetailScreenProps): JSX.Element {
           </div>
         </div>
 
-        <CastCrewSection cast={item.cast ?? []} />
+        <CreditsSection cast={item.cast ?? []} />
 
         {isSeries && seasons.length > 0 ? (
           <EpisodesBlock
@@ -624,56 +626,89 @@ function FooterColumn({ header, value }: { header: string; value: string }): JSX
   );
 }
 
-/* ───────────────────────────  cast & crew shelf  ────────────────────────────
- * Directors first (web order), then actors. Each entry is a focusable card; a
- * credit carrying a person_id becomes a tap target → /person/:id, otherwise it
- * stays display-only but still holds focus so the row is browsable. */
+/* ───────────────────────────────  credits  ──────────────────────────────────
+ * chino-web's credits (@/lib/credits): "Starring" — the actors in billing
+ * order, each with the part they play — then the rest of the credits grouped
+ * by role under a label ("Created by", "Directors", "Music", …), known roles
+ * first. Every credited name is a D-pad focusable; one with a person_id opens
+ * that person's page. */
 
-function CastCrewSection({ cast }: { cast: CastEntry[] }): JSX.Element | null {
-  const directors = cast.filter((c) => (c.role ?? '').toLowerCase() === 'director');
-  const actors = cast.filter((c) => !c.role || c.role.toLowerCase() === 'actor');
-  const ordered = [...directors, ...actors];
-  if (ordered.length === 0) return null;
+function CreditsSection({ cast }: { cast: CastEntry[] }): JSX.Element | null {
+  const { actors, crew } = groupCredits(cast);
+  if (actors.length === 0 && crew.length === 0) return null;
   return (
-    <section className="mt-12">
-      <h2 className="mb-4 text-2xl font-semibold text-white">Cast &amp; crew</h2>
-      <div className="flex gap-4 overflow-x-hidden py-2">
-        {ordered.map((member, i) => (
-          <CastCard key={`${member.role}:${member.name}:${i}`} member={member} />
-        ))}
-      </div>
+    <section className="mt-12 flex flex-col gap-8">
+      {actors.length > 0 ? (
+        <div>
+          <h2 className="mb-4 text-2xl font-semibold text-white">Starring</h2>
+          {/* One rail in billing order; the focus engine scrolls it. */}
+          <div className="flex gap-4 overflow-x-hidden py-2">
+            {actors.map((actor, i) => (
+              <ActorCard key={`${actor.person_id ?? actor.name}:${i}`} actor={actor} />
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {crew.length > 0 ? (
+        <div className="grid max-w-6xl grid-cols-3 gap-x-10 gap-y-6">
+          {crew.map((group) => (
+            <div key={group.role} className="min-w-0">
+              <div className="mb-2 text-base text-muted">{group.label}</div>
+              <div className="flex flex-wrap gap-2">
+                {group.people.map((person, i) => (
+                  <CreditName key={`${person.person_id ?? person.name}:${i}`} person={person} />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </section>
   );
 }
 
-function CastCard({ member }: { member: CastEntry }): JSX.Element {
-  const linkable = !!member.person_id;
-  const { ref, focused } = useFocusable({
-    onEnter: linkable
-      ? () => navigate(`/person/${encodeURIComponent(member.person_id as string)}`)
-      : undefined,
-  });
-  const roleLabel = (() => {
-    const r = (member.role ?? '').toLowerCase();
-    if (r === 'director') return 'Director';
-    if (r === 'actor') return 'Actor';
-    if (!member.role) return 'Cast';
-    return member.role.charAt(0).toUpperCase() + member.role.slice(1);
-  })();
+/** Open a credited person's page, when the credit names one. */
+function personEnter(credit: CastEntry): (() => void) | undefined {
+  const personId = credit.person_id;
+  return personId ? () => navigate(`/person/${encodeURIComponent(personId)}`) : undefined;
+}
+
+/** An actor in the Starring rail: initials, name, and the character beneath
+ *  ("Old Thom / Narrator" when they play two). */
+function ActorCard({ actor }: { actor: CastEntry }): JSX.Element {
+  const { ref, focused } = useFocusable({ onEnter: personEnter(actor) });
   return (
     <div
       ref={ref}
       data-focused={focused}
-      className={`flex w-32 shrink-0 cursor-default select-none flex-col items-center gap-2 rounded-lg p-2 ${
+      className={`flex w-40 shrink-0 cursor-default select-none flex-col items-center gap-2 p-2 ${
         focused ? 'bg-surface-2' : ''
       }`}
     >
-      <div className="flex h-20 w-20 items-center justify-center rounded-full bg-surface text-2xl font-semibold text-text">
-        {initialsOf(member.name)}
+      <div className="flex h-20 w-20 items-center justify-center bg-surface text-2xl font-semibold text-accent">
+        {initialsOf(actor.name)}
       </div>
-      <span className="line-clamp-2 text-center text-sm font-medium text-white">{member.name}</span>
-      <span className="text-xs text-muted">{roleLabel}</span>
+      <span className="line-clamp-2 text-center text-base font-medium text-white">{actor.name}</span>
+      {actor.character ? (
+        <span className="line-clamp-2 text-center text-sm text-muted">{actor.character}</span>
+      ) : null}
     </div>
+  );
+}
+
+/** One name under a crew label, focusable like the actors. */
+function CreditName({ person }: { person: CastEntry }): JSX.Element {
+  const { ref, focused } = useFocusable({ onEnter: personEnter(person) });
+  return (
+    <span
+      ref={ref}
+      data-focused={focused}
+      className={`cursor-default select-none px-3 py-1 text-lg ${
+        focused ? 'bg-white text-black' : 'bg-white/10 text-text'
+      }`}
+    >
+      {person.name}
+    </span>
   );
 }
 
