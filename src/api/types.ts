@@ -179,20 +179,45 @@ export interface PlayInfo {
   subtitle_tracks: PlayInfoTrack[];
 }
 
-/** A cast/crew person summary (search result). */
+/** A cast/crew person (GET /people search result; chino-api
+ *  internal/katalog/people.go Person). */
 export interface Person {
   id: string;
   name: string;
-  // Number of titles this person is credited on.
+  /** Number of titles this person is credited on; omitted when 0. */
   credits?: number;
+  /** The catalog holds a portrait of them. */
+  has_profile?: boolean;
+  /** Their portrait, "/api/v1/people/{id}/profile" (stream-token group, like
+   *  a poster); set only when has_profile. Resolve it with api.assetUrl. */
+  profile_url?: string;
 }
 
-/** A person plus their filmography. Wire shape is flat
- *  ({ id, name, items }); we normalise it into { person, items } so the
- *  consumer gets a tidy Person object. */
-export interface PersonDetail {
-  person: Person;
-  items: Item[];
+/** A title on a person's filmography: a catalogue item plus the person's
+ *  roles on it, in katalog-api's credit order (["director", "writer"]). */
+export interface PersonCredit extends Item {
+  roles?: string[];
+}
+
+/**
+ * GET /people/{id}: a person, what the catalog knows about them (each field
+ * omitted when unknown) and their filmography — flat on the wire, as here.
+ * Dates are YYYY-MM-DD. The biography is in biography_lang: the first of the
+ * request's Accept-Language languages the catalog has it in, else English,
+ * else any.
+ */
+export interface PersonDetail extends Person {
+  sort_name?: string;
+  also_known_as?: string[];
+  birth_date?: string;
+  death_date?: string;
+  birthplace?: string;
+  known_for_department?: string;
+  biography?: string;
+  biography_lang?: string;
+  tmdb_person_id?: string;
+  imdb_id?: string;
+  items: PersonCredit[];
 }
 
 /** A named watchlist. Every user always has exactly one default list. */

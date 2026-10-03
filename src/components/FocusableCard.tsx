@@ -20,6 +20,9 @@ interface FocusableCardProps {
   focusKey?: string;
   /** Notify the parent shelf when this card takes focus (rail can scroll it). */
   onFocus?: () => void;
+  /** A line naming someone's credit on the title ("Director · Writer"), as a
+   *  person's filmography shows it. */
+  credit?: string;
 }
 
 /** A continue-watching row's position as 0..100 percent, or null when nothing
@@ -43,6 +46,7 @@ export function FocusableCard({
   autoFocus,
   focusKey,
   onFocus,
+  credit,
 }: FocusableCardProps) {
   const { ref, focused } = useFocusable({ onEnter, autoFocus, focusKey, onFocus });
   const poster = api.posterUrl(item, streamToken);
@@ -115,6 +119,7 @@ export function FocusableCard({
             ) : null}
           </div>
         )}
+        {credit ? <div className="mt-1 line-clamp-2 text-sm text-muted">{credit}</div> : null}
       </div>
     </div>
   );

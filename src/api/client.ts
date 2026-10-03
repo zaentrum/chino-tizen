@@ -15,6 +15,7 @@ import type {
   Watchlist,
 } from './types';
 import { apiUrl, withStreamToken } from '@/lib/artwork';
+import { acceptLanguage } from '@/lib/people';
 
 /**
  * Typed client for chino-api's BFF. Endpoint paths/params mirror chino-web's
@@ -62,8 +63,8 @@ export class ChinoClient {
   }
 
   /** GET <base>/v1<path> with the bearer header, parsing JSON. */
-  private async getJSON<T>(path: string): Promise<T> {
-    const r = await fetch(`${this.base()}/v1${path}`, { headers: this.authHeaders() });
+  private async getJSON<T>(path: string, extraHeaders?: HeadersInit): Promise<T> {
+    const r = await fetch(`${this.base()}/v1${path}`, { headers: this.authHeaders(extraHeaders) });
     if (!r.ok) throw new Error(`chino-api ${r.status}`);
     return (await r.json()) as T;
   }
@@ -197,18 +198,20 @@ export class ChinoClient {
   }
 
   /**
-   * GET /v1/people/{id}?limit= — a person + filmography. The wire shape is
-   * flat ({ id, name, items }); we normalise it into { person, items } so the
-   * consumer gets a Person object. 404 surfaces as a thrown error.
+   * GET /v1/people/{id}?limit= — a person, what the catalog knows about them
+   * and their filmography (PersonDetail, flat on the wire). The biography
+   * comes in the TV's languages, most wanted first (Accept-Language, as
+   * chino-web sends it), else English. 404 surfaces as a thrown error.
    */
   async getPerson(id: string, limit = 100): Promise<PersonDetail> {
-    const j = await this.getJSON<{ id: string; name: string; credits?: number; items?: Item[] }>(
-      `/people/${encodeURIComponent(id)}?limit=${limit}`,
+    const languages = acceptLanguage(
+      typeof navigator === 'undefined' ? [] : navigator.languages ?? [navigator.language],
     );
-    return {
-      person: { id: j.id, name: j.name, credits: j.credits },
-      items: (j.items ?? []).map(stampWatched),
-    };
+    const j = await this.getJSON<PersonDetail>(
+      `/people/${encodeURIComponent(id)}?limit=${limit}`,
+      languages ? { 'Accept-Language': languages } : undefined,
+    );
+    return { ...j, items: (j.items ?? []).map(stampWatched) };
   }
 
   // ---------------------------------------------------------------------------

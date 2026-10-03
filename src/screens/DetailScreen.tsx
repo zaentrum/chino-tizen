@@ -35,6 +35,7 @@ import { useFocusable, useRemoteKey } from '@/tv/focus';
 import { TVKey } from '@/tv/keys';
 import { navigate, back } from '@/router';
 import { Spinner } from '@/components/Spinner';
+import { PersonAvatar } from '@/components/PersonAvatar';
 import { groupCredits } from '@/lib/credits';
 import { languageName } from '@/lib/subtitles';
 
@@ -86,15 +87,6 @@ function pickTrailer(item: Item): NonNullable<Item['trailers']>[number] | null {
   );
   if (official) return official;
   return pool.find((t) => /trailer/i.test(t.title ?? '')) ?? pool[0];
-}
-
-/** Up to two initials from a name, e.g. "Greta Gerwig" → "GG". */
-function initialsOf(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '?';
-  const first = parts[0][0]?.toUpperCase() ?? '';
-  const last = parts.length > 1 ? (parts[parts.length - 1][0]?.toUpperCase() ?? '') : '';
-  return (first + last) || '?';
 }
 
 /* ──────────────────────────────  screen  ───────────────────────────────────*/
@@ -685,9 +677,7 @@ function ActorCard({ actor }: { actor: CastEntry }): JSX.Element {
         focused ? 'bg-surface-2' : ''
       }`}
     >
-      <div className="flex h-20 w-20 items-center justify-center bg-surface text-2xl font-semibold text-accent">
-        {initialsOf(actor.name)}
-      </div>
+      <PersonAvatar name={actor.name} size={80} />
       <span className="line-clamp-2 text-center text-base font-medium text-white">{actor.name}</span>
       {actor.character ? (
         <span className="line-clamp-2 text-center text-sm text-muted">{actor.character}</span>

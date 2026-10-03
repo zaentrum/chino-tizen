@@ -1,44 +1,55 @@
 // Person / Filmography surface for the Tizen TV shell. Rail + top-bar chrome
-// (parity with Search / Browse), a header (initials-avatar + name + "· N
-// titles"), then a focusable poster grid of the person's credited titles
-// rendered with the shared FocusableCard. ENTER on a card opens that title's
-// Detail; BACK pops back to the originating surface (search results or the
-// Detail page a cast name was tapped from). Mirrors chino-androidtv
-// ui/person/PersonScreen.kt + PersonViewModel.kt and chino-web's usePerson hook.
+// (parity with Search / Browse), a header — the portrait (initials without
+// one), the name and the number of titles, then what the catalog knows about
+// them: known for, born (date, age, birthplace), died, and the biography —
+// then a focusable poster grid of their titles, each naming the person's roles
+// on it. ENTER on a card opens that title's Detail; BACK pops back to the
+// originating surface (search results or the Detail page a name was picked
+// on). Parity with chino-web's PersonPage (usePerson, lib/people, lib/credits)
+// and chino-androidtv's PersonScreen.
 //
-// Data: GET /v1/people/{id} via api.getPerson, which normalises the flat wire
-// shape into { person, items }. The returned items are standard catalogue Items
-// (poster/watched/progress), so the shared card renders them with no special
-// casing. Credit count = the filmography length (the full list of titles the
-// person is credited on), matching the reference VM.
+// Data: GET /v1/people/{id} via api.getPerson — the flat PersonDetail, the
+// biography asked for in the TV's languages. The portrait (profile_url) is
+// served like a poster, from the stream-token group, so it carries ?stream=.
+//
+// D-pad: the first title takes focus on entry. When the biography is cut
+// short, UP reaches "Read more", which opens it whole in an overlay that
+// UP/DOWN scroll; BACK closes the overlay first, then leaves the page.
 
-import { useEffect, useState } from 'react';
-import { User as UserIcon } from 'lucide-react';
-import type { Item, Person } from '@/api/types';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { ChevronDown } from 'lucide-react';
+import type { PersonDetail } from '@/api/types';
 import { api } from '@/api/instance';
 import SideRail from '@/components/SideRail';
 import TopBar from '@/components/TopBar';
 import FocusableCard from '@/components/FocusableCard';
 import Spinner from '@/components/Spinner';
+import { PersonAvatar } from '@/components/PersonAvatar';
+import { formatRoles } from '@/lib/credits';
+import { ageInYears, formatCatalogDate, todayCatalogDate } from '@/lib/people';
 import { useRoute, navigate, back } from '@/router';
-import { useRemoteKey } from '@/tv/focus';
+import { focusKey, useFocusable, useRemoteKey } from '@/tv/focus';
 import { TVKey } from '@/tv/keys';
 
 type PersonState =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
-  | { kind: 'ready'; person: Person; items: Item[] };
+  | { kind: 'ready'; person: PersonDetail };
+
+/** focusKey of "Read more", to land on it again when the overlay closes. */
+const READ_MORE_KEY = 'person:read-more';
 
 export default function PersonScreen(): JSX.Element {
   const { params } = useRoute();
   const personId = params.id ?? '';
   const [state, setState] = useState<PersonState>({ kind: 'loading' });
-  // Stream token authorises the poster <img> URLs (best-effort; posters fall
-  // back to a placeholder if it never arrives).
+  // Stream token authorises the poster + portrait <img> URLs (best-effort;
+  // they fall back to placeholders / initials if it never arrives).
   const [streamToken, setStreamToken] = useState<string | undefined>(undefined);
 
   // BACK returns to the previous surface (search results / the Detail page the
-  // name was tapped from). The history stack already holds it, so just pop.
+  // name was picked on). The biography overlay subscribes after this, so it
+  // gets BACK first while it is open.
   useRemoteKey(TVKey.BACK, () => back());
 
   useEffect(() => {
@@ -49,7 +60,7 @@ export default function PersonScreen(): JSX.Element {
         if (alive) setStreamToken(t);
       })
       .catch(() => {
-        /* artwork falls back to the unauthorised placeholder */
+        /* artwork falls back to the placeholders */
       });
     return () => {
       alive = false;
@@ -65,8 +76,8 @@ export default function PersonScreen(): JSX.Element {
     }
     api
       .getPerson(personId)
-      .then((detail) => {
-        if (alive) setState({ kind: 'ready', person: detail.person, items: detail.items });
+      .then((person) => {
+        if (alive) setState({ kind: 'ready', person });
       })
       .catch((e: unknown) => {
         if (alive) {
@@ -92,11 +103,7 @@ export default function PersonScreen(): JSX.Element {
             </div>
           ) : null}
           {state.kind === 'ready' ? (
-            <Filmography
-              person={state.person}
-              items={state.items}
-              streamToken={streamToken}
-            />
+            <PersonView person={state.person} streamToken={streamToken} />
           ) : null}
         </div>
       </div>
@@ -104,69 +111,226 @@ export default function PersonScreen(): JSX.Element {
   );
 }
 
-interface FilmographyProps {
-  person: Person;
-  items: Item[];
+/** The header + the focusable filmography grid. */
+function PersonView({
+  person,
+  streamToken,
+}: {
+  person: PersonDetail;
   streamToken?: string;
-}
-
-/** Person header + the focusable filmography grid. The first card autoFocuses
- *  so a remote press lands on a title immediately on entry. */
-function Filmography({ person, items, streamToken }: FilmographyProps): JSX.Element {
-  // Credit count = the number of titles returned (the filmography is the full
-  // credited list), falling back to the server-reported count if items are
-  // capped. Matches the reference VM (credits = items.size).
+}): JSX.Element {
+  const [bioOpen, setBioOpen] = useState(false);
+  const items = person.items ?? [];
+  // The titles listed, else the server's count when the list came back empty.
   const credits = items.length || person.credits || 0;
+  // The portrait once the token that authorises it is there (a request
+  // without it would only 401); initials until then, and without one.
+  const portrait =
+    person.has_profile && streamToken ? api.assetUrl(person.profile_url, streamToken) : undefined;
+  const facts = personFacts(person);
+  const biography = person.biography?.trim();
 
   return (
-    <div className="flex flex-col gap-8">
-      <PersonHeader name={person.name} credits={credits} />
-
-      {items.length === 0 ? (
-        <p className="text-muted">No titles for {person.name}.</p>
-      ) : (
-        <div className="flex flex-wrap gap-4 py-2">
-          {items.map((item, i) => (
-            <FocusableCard
-              key={item.id}
-              item={item}
-              streamToken={streamToken}
-              autoFocus={i === 0}
-              onEnter={() => navigate(`/detail/${item.id}`)}
+    <div className="flex flex-col gap-10">
+      <div className="flex items-start gap-10">
+        <PersonAvatar
+          name={person.name}
+          src={portrait}
+          size={person.has_profile ? 192 : 128}
+          portrait={!!person.has_profile}
+        />
+        <div className="min-w-0 max-w-5xl flex-1">
+          <h1 className="text-5xl font-bold text-text">{person.name}</h1>
+          <p className="mt-2 text-lg text-muted">{creditLabel(credits)}</p>
+          {facts.length > 0 ? (
+            <div className="mt-6 grid grid-cols-3 gap-x-10 gap-y-4 text-lg">
+              {facts.map((f) => (
+                <div key={f.label} className="min-w-0">
+                  <div className="mb-1 text-muted">{f.label}</div>
+                  {f.lines.map((line) => (
+                    <div key={line} className="break-words text-text">
+                      {line}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {biography ? (
+            <Biography
+              text={biography}
+              lang={person.biography_lang}
+              onReadMore={() => setBioOpen(true)}
             />
-          ))}
+          ) : null}
         </div>
-      )}
+      </div>
+
+      <section>
+        <h2 className="mb-4 text-2xl font-semibold text-text">Filmography</h2>
+        {items.length === 0 ? (
+          <p className="text-muted">No titles for {person.name}.</p>
+        ) : (
+          <div className="flex flex-wrap gap-4 py-2">
+            {items.map((item, i) => (
+              <FocusableCard
+                key={item.id}
+                item={item}
+                streamToken={streamToken}
+                autoFocus={i === 0}
+                credit={formatRoles(item.roles) || undefined}
+                onEnter={() => navigate(`/detail/${item.id}`)}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {bioOpen && biography ? (
+        <BiographyOverlay
+          name={person.name}
+          text={biography}
+          lang={person.biography_lang}
+          onClose={() => {
+            setBioOpen(false);
+            // Back on "Read more" once the overlay is gone, not wherever the
+            // engine would land next.
+            window.setTimeout(() => focusKey(READ_MORE_KEY), 0);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
 
-/** Person header — initials-avatar + name + "· N titles" credit count. */
-function PersonHeader({ name, credits }: { name: string; credits: number }): JSX.Element {
-  const initials = initialsOf(name);
+/**
+ * The labelled facts under the name, as chino-web lists them: what they are
+ * known for, when and where they were born (with their age), when they died
+ * (with the age they reached). Dates in the TV's locale ("March 3, 1957").
+ */
+function personFacts(p: PersonDetail): { label: string; lines: string[] }[] {
+  const facts: { label: string; lines: string[] }[] = [];
+  if (p.known_for_department) facts.push({ label: 'Known for', lines: [p.known_for_department] });
+  const born = formatCatalogDate(p.birth_date);
+  const died = formatCatalogDate(p.death_date);
+  const age = ageInYears(p.birth_date, p.death_date || todayCatalogDate());
+  if (born || p.birthplace) {
+    const lines: string[] = [];
+    if (born) lines.push(!died && age !== undefined ? `${born} (age ${age})` : born);
+    if (p.birthplace) lines.push(p.birthplace);
+    facts.push({ label: 'Born', lines });
+  }
+  if (died) facts.push({ label: 'Died', lines: [age !== undefined ? `${died} (aged ${age})` : died] });
+  return facts;
+}
+
+/** The biography, cut to five lines; "Read more" (only when it is in fact
+ *  cut) opens it whole. In its own language, for hyphenation. */
+function Biography({
+  text,
+  lang,
+  onReadMore,
+}: {
+  text: string;
+  lang?: string;
+  onReadMore: () => void;
+}): JSX.Element {
+  const ref = useRef<HTMLParagraphElement | null>(null);
+  const [clamped, setClamped] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const measure = () => setClamped(el.scrollHeight > el.clientHeight + 1);
+    measure();
+    // Fonts arriving late reflow the text; re-measure where the runtime can.
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [text]);
   return (
-    <div className="flex items-center gap-6">
-      <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-full bg-surface text-2xl font-semibold text-text">
-        {initials || <UserIcon className="h-8 w-8" />}
-      </div>
-      <div className="min-w-0">
-        <h1 className="truncate text-4xl font-bold text-text">{name}</h1>
-        <p className="mt-1 text-muted">· {creditLabel(credits)}</p>
+    <div className="mt-6">
+      <p
+        ref={ref}
+        lang={lang || undefined}
+        className="line-clamp-5 whitespace-pre-line text-lg leading-relaxed text-text"
+      >
+        {text}
+      </p>
+      {clamped ? <ReadMore onEnter={onReadMore} /> : null}
+    </div>
+  );
+}
+
+function ReadMore({ onEnter }: { onEnter: () => void }): JSX.Element {
+  const { ref, focused } = useFocusable({ onEnter, focusKey: READ_MORE_KEY });
+  return (
+    <div
+      ref={ref}
+      data-focused={focused}
+      className={`mt-3 inline-flex cursor-default select-none items-center gap-2 px-4 py-2 text-lg ${
+        focused ? 'bg-white text-black' : 'bg-white/10 text-accent'
+      }`}
+    >
+      Read more
+      <ChevronDown className="h-5 w-5" />
+    </div>
+  );
+}
+
+/** The whole biography over the page. UP/DOWN scroll it, LEFT/RIGHT stay in
+ *  it (the page's cards are behind it), ENTER on Close or BACK closes it. */
+function BiographyOverlay({
+  name,
+  text,
+  lang,
+  onClose,
+}: {
+  name: string;
+  text: string;
+  lang?: string;
+  onClose: () => void;
+}): JSX.Element {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const close = useFocusable({ onEnter: onClose, autoFocus: true });
+  useRemoteKey([TVKey.UP, TVKey.DOWN, TVKey.LEFT, TVKey.RIGHT], (e) => {
+    e.preventDefault();
+    const el = scrollRef.current;
+    const code = e.keyCode || e.which;
+    if (!el || (code !== TVKey.UP && code !== TVKey.DOWN)) return;
+    el.scrollTop += (code === TVKey.DOWN ? 1 : -1) * Math.round(el.clientHeight * 0.6);
+  });
+  useRemoteKey(TVKey.BACK, (e) => {
+    e.preventDefault();
+    onClose();
+  });
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85">
+      <div className="flex max-h-[85vh] w-[64rem] flex-col gap-6 border border-border-2 bg-surface p-10">
+        <h2 className="text-3xl font-semibold text-text">{name}</h2>
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto pr-4">
+          <p lang={lang || undefined} className="whitespace-pre-line text-xl leading-relaxed text-text">
+            {text}
+          </p>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-base text-muted">Up / Down to scroll</span>
+          <div
+            ref={close.ref}
+            data-focused={close.focused}
+            className={`cursor-default select-none px-6 py-2 text-lg font-semibold ${
+              close.focused ? 'bg-white text-black' : 'bg-white/10 text-white'
+            }`}
+          >
+            Close
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-/** Up to two initials from a person's name, e.g. "Greta Gerwig" -> "GG". */
-function initialsOf(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '';
-  const first = parts[0]?.[0]?.toUpperCase() ?? '';
-  const last = parts.length > 1 ? parts[parts.length - 1]?.[0]?.toUpperCase() ?? '' : '';
-  return first + last;
-}
-
-/** "· N titles" copy, singularising at 1. Matches the Search people-row label. */
+/** "N titles", singular at 1. Matches the Search people-row label. */
 function creditLabel(credits: number): string {
   return credits === 1 ? '1 title' : `${credits} titles`;
 }

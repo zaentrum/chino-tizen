@@ -14,7 +14,7 @@
 // reference VM so we don't hammer chino-api on every keystroke.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Search as SearchIcon, User as UserIcon } from 'lucide-react';
+import { Search as SearchIcon } from 'lucide-react';
 import type { Item, Person } from '@/api/types';
 import { api } from '@/api/instance';
 import SideRail from '@/components/SideRail';
@@ -22,6 +22,7 @@ import TopBar from '@/components/TopBar';
 import FocusableCard from '@/components/FocusableCard';
 import Spinner from '@/components/Spinner';
 import KeyboardOverlay from '@/components/KeyboardOverlay';
+import { PersonAvatar } from '@/components/PersonAvatar';
 import { useFocusable, useRemoteKey } from '@/tv/focus';
 import { TVKey } from '@/tv/keys';
 import { navigate, back } from '@/router';
@@ -237,6 +238,7 @@ function Results({ query, items, people, streamToken }: ResultsProps): JSX.Eleme
               <PersonChip
                 key={person.id}
                 person={person}
+                streamToken={streamToken}
                 autoFocus={i === 0}
                 onEnter={() => navigate(`/person/${person.id}`)}
               />
@@ -273,22 +275,28 @@ function Results({ query, items, people, streamToken }: ResultsProps): JSX.Eleme
 }
 
 /**
- * One focusable "Cast & crew" person chip: an initials-avatar placeholder (no
- * person photos exist), the name, and "· N titles". ENTER opens the Person
- * surface. Fixed width so D-pad focus across the row stays sane. Mirrors the
- * androidtv PersonChip.
+ * One focusable "Cast & crew" person chip: their portrait (initials without
+ * one — chino-web's search cards), the name, and "· N titles". ENTER opens the
+ * Person surface. Fixed width so D-pad focus across the row stays sane.
+ * Mirrors the androidtv PersonChip.
  */
 function PersonChip({
   person,
+  streamToken,
   onEnter,
   autoFocus,
 }: {
   person: Person;
+  streamToken?: string;
   onEnter: () => void;
   autoFocus?: boolean;
 }): JSX.Element {
   const { ref, focused } = useFocusable({ onEnter, autoFocus });
   const credits = person.credits ?? 0;
+  // The portrait is served like a poster (stream-token group): only once the
+  // token is there.
+  const portrait =
+    person.has_profile && streamToken ? api.assetUrl(person.profile_url, streamToken) : undefined;
   return (
     <div
       ref={ref}
@@ -297,25 +305,13 @@ function PersonChip({
         focused ? 'border-accent bg-surface-2' : 'border-border-2 bg-surface'
       }`}
     >
-      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-bg text-text">
-        {initialsOf(person.name) || <UserIcon className="h-5 w-5" />}
-      </div>
+      <PersonAvatar name={person.name} src={portrait} size={48} />
       <div className="min-w-0 flex-1">
         <div className="truncate font-medium text-text">{person.name}</div>
         <div className="truncate text-sm text-muted">· {creditLabel(credits)}</div>
       </div>
     </div>
   );
-}
-
-/** Up to two initials from a person's name, e.g. "Greta Gerwig" -> "GG". Shared
- *  shape with PersonScreen. */
-function initialsOf(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '';
-  const first = parts[0]?.[0]?.toUpperCase() ?? '';
-  const last = parts.length > 1 ? parts[parts.length - 1]?.[0]?.toUpperCase() ?? '' : '';
-  return first + last;
 }
 
 /** "· N titles" copy, singularising at 1. Matches the Person header label. */
