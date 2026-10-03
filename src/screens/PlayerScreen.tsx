@@ -1021,7 +1021,7 @@ export default function PlayerScreen(): JSX.Element {
           title="Quality"
           rows={qualities.map((q) => ({
             id: q.id,
-            label: q.height ? `${q.label} · ${q.height}p` : q.label,
+            label: q.label,
             selected: q.id === quality,
           }))}
           onPick={(id) => {

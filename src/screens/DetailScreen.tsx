@@ -184,29 +184,22 @@ export default function DetailScreen({ id }: DetailScreenProps): JSX.Element {
     return () => ctrl.abort();
   }, [id]);
 
-  // Resolve the saved-state of the watchlist "+" by scanning the user's lists
-  // for this item. Also caches the default list id for the add fast-path.
+  // Resolve the saved-state of the watchlist "+" — is this item in any of the
+  // user's lists — and cache the default list id for the add fast-path. One
+  // memberships request (chino-web's), not a read of every list, which
+  // fetched each of its items. Best-effort: a failure leaves the icon empty.
   useEffect(() => {
     const ctrl = new AbortController();
     void (async () => {
       try {
-        const lists = await api.listWatchlists();
+        const [lists, memberships] = await Promise.all([
+          api.listWatchlists(),
+          api.watchlistMemberships([id]).catch(() => null),
+        ]);
         if (ctrl.signal.aborted) return;
         const def = lists.find((l) => l.is_default) ?? lists[0] ?? null;
         defaultListIdRef.current = def?.id ?? null;
-        // Membership: a list reports its count but not its members, so we ask
-        // each list's detail and check whether this id is inside. Cheap on a
-        // handful of lists; web uses a dedicated memberships endpoint we don't
-        // surface here. Best-effort — a failure just leaves the icon empty.
-        const membership = await Promise.all(
-          lists.map((l) =>
-            api
-              .getWatchlist(l.id)
-              .then((w) => w.items.some((it) => it.id === id))
-              .catch(() => false),
-          ),
-        );
-        if (!ctrl.signal.aborted) setInWatchlist(membership.some(Boolean));
+        if (memberships) setInWatchlist((memberships[id] ?? []).length > 0);
       } catch {
         /* lists unavailable — leave the icon in its default empty state */
       }

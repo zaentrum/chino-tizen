@@ -14,10 +14,10 @@
 // IMPORTANT design rules honoured here:
 //   - NO dropdowns. Genre and Sort are chip ROWS (chino-web's BrowseFilters /
 //     androidtv's FilterChipsRow shape), so a 10-foot D-pad can land on them.
-//   - Genre chips are derived from the items actually loaded (distinct
-//     item.genres), with an "All" chip that clears the filter — the catalogue's
-//     real genres without a second round-trip, exactly like the reference
-//     clients fall back to when /genres is unavailable.
+//   - Genre chips are the catalogue's genres (GET /genres, as chino-web's
+//     BrowseFilters loads them — list rows carry no genres to derive them
+//     from), with an "All" chip that clears the filter, and a short fixed set
+//     while /genres is not in or unavailable.
 //   - Sort options match the cross-client set, mapped to the chino-api `sort`
 //     values chino-web's BrowseQuery uses: Recommended → rating, Newest →
 //     newest, A–Z → title.
@@ -60,9 +60,8 @@ const SORTS: SortOption[] = [
 ];
 const DEFAULT_SORT = SORTS[0].key;
 
-// Fallback genre chips when the loaded page carries no genre tags at all (lean
-// browse rows can omit them). Kept short and neutral; the live set derived from
-// item.genres takes precedence whenever the items expose them.
+// Fallback genre chips while the catalogue's genres (GET /genres) are not in,
+// or when that call fails. Kept short and neutral.
 const FALLBACK_GENRES = [
   'Action',
   'Comedy',
@@ -77,21 +76,6 @@ function typeLabels(type: string): { heading: string; noun: string } {
   return type === 'series'
     ? { heading: 'Series', noun: 'shows' }
     : { heading: 'Movies', noun: 'movies' };
-}
-
-/** Distinct genres across the loaded items, case-folded for de-dup but kept in
- *  their first-seen display form, sorted alphabetically. Falls back to the
- *  fixed list when the page exposes none. */
-function deriveGenres(items: Item[]): string[] {
-  const seen = new Map<string, string>();
-  for (const it of items) {
-    for (const g of it.genres ?? []) {
-      const key = g.trim().toLowerCase();
-      if (key && !seen.has(key)) seen.set(key, g.trim());
-    }
-  }
-  if (seen.size === 0) return FALLBACK_GENRES;
-  return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
 }
 
 export default function BrowseScreen(): JSX.Element {
@@ -121,10 +105,23 @@ export default function BrowseScreen(): JSX.Element {
   // placeholder if it never arrives.
   const [streamToken, setStreamToken] = useState<string | undefined>(undefined);
 
-  // The genre chip set is derived from the loaded items, but we want it stable
-  // across pages (it shouldn't reshuffle as more items append). Seed it from
-  // the first page and keep the union as pages arrive.
+  // The genre chips: the catalogue's genres (GET /genres, chino-web's
+  // source) — list rows carry no genres to derive them from.
   const [genres, setGenres] = useState<string[]>(FALLBACK_GENRES);
+  useEffect(() => {
+    let alive = true;
+    void api
+      .genres()
+      .then((list) => {
+        if (alive && list.length > 0) setGenres(list);
+      })
+      .catch(() => {
+        /* keep the fallback chips */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // A monotonically increasing token so a slow earlier request can never clobber
   // a newer result after the user changes a chip (the latest run always wins).
@@ -171,12 +168,7 @@ export default function BrowseScreen(): JSX.Element {
           offset: nextOffset,
         });
         if (run !== runRef.current) return; // superseded by a newer run
-        setItems((prev) => {
-          const merged = reset ? page.items : [...prev, ...page.items];
-          // Keep the genre chip set in sync with everything we've seen so far.
-          setGenres(deriveGenres(merged));
-          return merged;
-        });
+        setItems((prev) => (reset ? page.items : [...prev, ...page.items]));
         setOffset(nextOffset + page.items.length);
         // A full page means there may be more; a short page is the end.
         setMore(page.items.length >= LIMIT);

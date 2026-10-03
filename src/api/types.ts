@@ -9,9 +9,10 @@
 //
 // We follow chino-web's hook types (useItems / useItem / usePeople /
 // useWatchlists) for the shapes the UI actually consumes, and keep the
-// extra fields chino-web carries (watched_at, sort_title, and series_title +
+// extra fields chino-web carries (watched_at, and series_title +
 // position/duration on continue-watching rows) so screens have the same
-// data the reference client does.
+// data the reference client does. No sort_title: chino-api does not pass it
+// on.
 
 /**
  * A cast or crew credit on an item, as katalog-api sends it
@@ -52,11 +53,11 @@ export interface Subtitle {
   url?: string;
 }
 
-/** A trailer/extra reference (TMDB-sourced). */
+/** A trailer/extra reference (TMDB-sourced). chino-api always sends `url`. */
 export interface Trailer {
   site?: string;
   external_id?: string;
-  url?: string;
+  url: string;
   title?: string;
 }
 
@@ -78,7 +79,6 @@ export interface Item {
   id: string;
   type: string;
   title: string;
-  sort_title?: string;
   year?: number;
   rating?: number;
   description?: string;
@@ -171,7 +171,9 @@ export interface PlayInfoTrack {
  *  items (the master playlist owns the renditions there). */
 export interface PlayInfo {
   duration_ms: number;
-  qualities: { id: string; label: string; height?: number }[];
+  /** The transcode ladder ({ name, label } on the wire); empty for packaged,
+   *  remux and passthrough streams. */
+  qualities: { id: string; label: string }[];
   default_quality?: string;
   mode?: string;
   /** The default one is what plays. */

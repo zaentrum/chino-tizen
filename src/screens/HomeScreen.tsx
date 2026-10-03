@@ -117,6 +117,7 @@ export default function HomeScreen(): JSX.Element {
           topRated,
           continueWatching,
           heroPoolRaw,
+          catalogueGenres,
         ] = await Promise.all([
           api.streamToken().catch(() => ''),
           api
@@ -150,6 +151,7 @@ export default function HomeScreen(): JSX.Element {
             })
             .then((r) => r.items)
             .catch(() => [] as Item[]),
+          api.genres().catch(() => [] as string[]),
         ]);
         if (cancelled) return;
 
@@ -160,28 +162,33 @@ export default function HomeScreen(): JSX.Element {
             ? heroPoolRaw
             : [...recentMovies, ...recentSeries].slice(0, 1);
 
-        // The slim list endpoint omits the description, so the hero overview
-        // would render blank. Fan out parallel getItem(id) detail fetches and
-        // copy each item's description back onto the hero entry (mirror
-        // androidtv); keep the original on failure.
+        // The slim list endpoint omits the description (and the genres), so
+        // the hero overview would render blank. Fan out parallel getItem(id)
+        // detail fetches and copy each item's description and genres back
+        // onto the hero entry (mirror androidtv); keep the original on failure.
         const heroPool = await Promise.all(
           rawPool.map((it) =>
             api
               .getItem(it.id)
-              .then((detail) => ({ ...it, description: detail.description ?? it.description }))
+              .then((detail) => ({
+                ...it,
+                description: detail.description ?? it.description,
+                genres: detail.genres ?? it.genres,
+              }))
               .catch(() => it),
           ),
         );
         if (cancelled) return;
 
-        // A few genre rails off the recent catalogue's genres — gives the Home
-        // page some breadth without an endless scroll. Genres are gathered from
-        // the items we already fetched (no genre endpoint dependency); each rail
+        // A few genre rails — some breadth without an endless scroll. List
+        // rows carry no genres (only an item's detail does), so they come from
+        // the hero titles' details, then the catalogue's genre list; each rail
         // is a single best-effort query.
         const genrePool = new Set<string>();
-        for (const it of [...recentMovies, ...recentSeries, ...topRated]) {
+        for (const it of heroPool) {
           for (const g of it.genres ?? []) genrePool.add(g);
         }
+        for (const g of catalogueGenres) genrePool.add(g);
         const chosenGenres = Array.from(genrePool).slice(0, GENRE_RAIL_COUNT);
         const genreRails = (
           await Promise.all(

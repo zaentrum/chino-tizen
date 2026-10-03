@@ -176,6 +176,14 @@ export class ChinoClient {
     return { next: j.next ? stampWatched(j.next) : null, anchor: j.anchor, reason: j.reason };
   }
 
+  /** GET /v1/genres — the catalogue's genres, sorted: { genres: [...] }. Rows
+   *  of the list endpoints carry no genres (only GET /items/{id} does), so the
+   *  browse chips and the Home genre rails come from here, as on chino-web. */
+  async genres(): Promise<string[]> {
+    const j = await this.getJSON<{ genres?: string[] | null }>(`/genres`);
+    return (j.genres ?? []).filter((g) => typeof g === 'string' && g.trim() !== '');
+  }
+
   /** GET /v1/items/{id}/similar — "More like this". Returns [] on no match.
    *  Wire shape is { items, total }. */
   async similar(id: string, limit = 12): Promise<Item[]> {
@@ -308,6 +316,19 @@ export class ChinoClient {
     };
   }
 
+  /** GET /v1/me/watchlists/memberships?ids=a,b — which of the user's lists
+   *  hold each item: { memberships: { itemId: [listId, …] } }, items in no
+   *  list left out. One request, where reading every list hydrates each of
+   *  its items. */
+  async watchlistMemberships(itemIds: string[]): Promise<Record<string, string[]>> {
+    if (itemIds.length === 0) return {};
+    const ids = itemIds.map((id) => encodeURIComponent(id)).join(',');
+    const j = await this.getJSON<{ memberships?: Record<string, string[]> | null }>(
+      `/me/watchlists/memberships?ids=${ids}`,
+    );
+    return j.memberships ?? {};
+  }
+
   /** POST /v1/me/watchlists — create a named list. Body { name }. */
   async createWatchlist(name: string): Promise<Watchlist> {
     const r = await fetch(`${this.base()}/v1/me/watchlists`, {
@@ -362,8 +383,8 @@ export class ChinoClient {
 
   /**
    * GET /v1/items/{id}/play/info?caps= — the server's transcode decision +
-   * quality ladder. The wire ladder is [{ name, label }]; we normalise to
-   * { id, label }. `qualities` is null on packaged items.
+   * quality ladder. The wire ladder is [{ name, label }] (no height); we
+   * normalise to { id, label }. `qualities` is null on packaged items.
    */
   async playInfo(id: string, caps: string): Promise<PlayInfo> {
     const qs = caps ? `?caps=${encodeURIComponent(caps)}` : '';
@@ -371,7 +392,7 @@ export class ChinoClient {
       duration_ms?: number;
       mode?: string;
       default_quality?: string;
-      qualities?: { name?: string; id?: string; label?: string; height?: number }[] | null;
+      qualities?: { name?: string; label?: string }[] | null;
       audio_tracks?: PlayInfoTrack[] | null;
       subtitle_tracks?: PlayInfoTrack[] | null;
     }>(`/items/${encodeURIComponent(id)}/play/info${qs}`);
@@ -380,9 +401,8 @@ export class ChinoClient {
       mode: j.mode,
       default_quality: j.default_quality,
       qualities: (j.qualities ?? []).map((q) => ({
-        id: q.id ?? q.name ?? '',
+        id: q.name ?? '',
         label: q.label ?? q.name ?? '',
-        height: q.height,
       })),
       audio_tracks: j.audio_tracks ?? [],
       subtitle_tracks: j.subtitle_tracks ?? [],
