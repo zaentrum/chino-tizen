@@ -300,10 +300,12 @@ export default function PlayerScreen(): JSX.Element {
   // `current` a seek sets. Null until the saved position has been read, so a
   // teardown before then writes nothing.
   const guardRef = useRef<ProgressGuard | null>(null);
-  // Engine time updates count as "played to" from the first frame on and not
-  // while paused (hls.js reports a seek made while paused as a time update).
+  // Engine time updates count as "played to" from the first frame on, and
+  // only once the engine reports playing — not while paused, and not before
+  // playback started (hls.js reports a seek made while paused as a time
+  // update).
   const firstFrameRef = useRef(false);
-  const pausedRef = useRef(false);
+  const pausedRef = useRef(true);
 
   /* ── Force the document to pure black while mounted so any sliver around the
      stage shows black, not the shell's #0D1117. Mirrors chino-web. ── */

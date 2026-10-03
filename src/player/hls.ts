@@ -350,9 +350,11 @@ export class HlsEngine implements ChinoPlayer, SubtitleCapableEngine {
     v.addEventListener('waiting', () => this.emit('buffering'));
     v.addEventListener('canplay', () => {
       // Pair with onPause stall recovery (chino-web): once data is back,
-      // clear buffering. firstframe also fires here for the native-HLS path,
-      // which may not emit 'playing' before the first paint.
-      this.emit('playing');
+      // clear buffering — 'playing' only when the video is in fact playing
+      // (a paused video gets canplay too, and the screen saves the resume
+      // position only while playing). firstframe also fires here for the
+      // native-HLS path, which may not emit 'playing' before the first paint.
+      if (!v.paused) this.emit('playing');
       if (!this.firstFrameFired && v.readyState >= 2) {
         this.firstFrameFired = true;
         this.emit('firstframe');
