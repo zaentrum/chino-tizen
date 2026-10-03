@@ -4,10 +4,12 @@ import type {
   FeedbackResult,
   Item,
   ListResult,
+  NextEpisode,
   Person,
   PersonDetail,
   PlayInfo,
   PlayInfoTrack,
+  Season,
   Segment,
   Subtitle,
   Watchlist,
@@ -149,6 +151,28 @@ export class ChinoClient {
     const qs = include ? `?include=${encodeURIComponent(include)}` : '';
     const item = await this.getJSON<Item>(`/items/${encodeURIComponent(id)}${qs}`);
     return stampWatched(item);
+  }
+
+  /** GET /v1/series/{id}/episodes — every episode, by season. Wire:
+   *  { series_id, seasons: [{ season, episodes }] | null, count }. */
+  async seriesEpisodes(seriesId: string): Promise<Season[]> {
+    const j = await this.getJSON<{ seasons?: { season: number; episodes?: Item[] | null }[] | null }>(
+      `/series/${encodeURIComponent(seriesId)}/episodes`,
+    );
+    return (j.seasons ?? []).map((s) => ({
+      season: s.season,
+      episodes: (s.episodes ?? []).map(stampWatched),
+    }));
+  }
+
+  /** GET /v1/series/{id}/next-episode[?after={episodeId}] — see NextEpisode.
+   *  The wire wraps the episode as `next`; there is no flat `{ id }`. */
+  async nextEpisode(seriesId: string, afterEpisodeId?: string): Promise<NextEpisode> {
+    const qs = afterEpisodeId ? `?after=${encodeURIComponent(afterEpisodeId)}` : '';
+    const j = await this.getJSON<{ next?: Item | null; anchor?: string; reason?: string }>(
+      `/series/${encodeURIComponent(seriesId)}/next-episode${qs}`,
+    );
+    return { next: j.next ? stampWatched(j.next) : null, anchor: j.anchor, reason: j.reason };
   }
 
   /** GET /v1/items/{id}/similar — "More like this". Returns [] on no match.

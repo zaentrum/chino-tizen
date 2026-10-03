@@ -12,11 +12,8 @@
 // similar. Everything interactive is a @/tv/focus focusable so the D-pad walks
 // the whole page; BACK pops the route.
 //
-// Three endpoints this screen needs are not surfaced on the shared ChinoClient
-// (series episodes, next-episode, saved progress) — exactly as chino-web reads
-// them straight from fetch in its hooks and androidtv reads them off ChinoApi.
-// We mirror that here with a small authorised-fetch helper bound to the
-// configured server + active session token (authStore). See `assumptions`.
+// "Play" on a series starts the episode in progress, else the next one
+// (@/api/seriesPlay) — never simply the first; the button names it.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -30,83 +27,19 @@ import {
   Star,
   Youtube,
 } from 'lucide-react';
-import type { CastEntry, Item } from '@/api/types';
+import type { CastEntry, Item, Season } from '@/api/types';
 import { api } from '@/api/instance';
-import { authStore } from '@/auth/session';
+import { resolveSeriesPlay, type SeriesPlayTarget } from '@/api/seriesPlay';
 import { useFocusable, useRemoteKey } from '@/tv/focus';
 import { TVKey } from '@/tv/keys';
 import { navigate, back } from '@/router';
 import { Spinner } from '@/components/Spinner';
 import { languageName } from '@/lib/subtitles';
 
-/* ───────────────────────────  episode wire types  ──────────────────────────
- * Shapes match chino-api's GET /v1/series/{id}/episodes (web useSeriesEpisodes /
- * androidtv SeriesEpisodes): snake_case episode rows grouped into seasons. */
-
-interface EpisodeRowData {
-  id: string;
-  title: string;
-  season_number?: number;
-  episode_number?: number;
-  parent_id?: string;
-  /** RFC3339 timestamp, or null/absent when the user hasn't finished it. */
-  watched_at?: string | null;
-  /** katalog emits the episode synopsis as `description` (same as Item). */
-  description?: string;
-  /** The episode's still ("/api/v1/items/{id}/backdrop"), as on every Item. */
-  backdrop_url?: string;
-  duration_ms?: number;
-  year?: number;
-}
-
-interface SeasonData {
-  season: number;
-  episodes: EpisodeRowData[];
-}
-
-/* ───────────────────────────  authorised fetch  ─────────────────────────────
- * The shared client owns most endpoints; these three aren't on it. Read the
- * configured API base + bearer the same way the client does (authStore) so the
- * request is authorised and tracks the connected server. */
-
-function apiBase(): string {
-  return (authStore.getApiBase() ?? '').replace(/\/+$/, '');
-}
-
-async function getJSON<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const headers = new Headers({ Accept: 'application/json' });
-  const t = authStore.getToken();
-  if (t) headers.set('Authorization', `Bearer ${t}`);
-  const r = await fetch(`${apiBase()}/v1${path}`, { headers, signal });
-  if (!r.ok) throw new Error(`chino-api ${r.status}`);
-  return (await r.json()) as T;
-}
-
-/** GET /v1/series/{id}/episodes — seasons + episodes for a series. */
-async function fetchSeasons(seriesId: string, signal?: AbortSignal): Promise<SeasonData[]> {
-  const j = await getJSON<{ seasons?: SeasonData[] }>(
-    `/series/${encodeURIComponent(seriesId)}/episodes`,
-    signal,
-  );
-  return (j.seasons ?? []).map((s) => ({ season: s.season, episodes: s.episodes ?? [] }));
-}
-
 /** GET /v1/items/{id}/progress — saved resume position (seconds), for the
  *  Resume label. Unreadable → no Resume button; the player reads it again. */
 async function fetchResumeSec(itemId: string): Promise<number> {
   return api.getProgress(itemId).catch(() => 0);
-}
-
-/** GET /v1/series/{id}/next-episode — the episode that should play next. */
-async function fetchNextEpisodeId(seriesId: string): Promise<string | null> {
-  try {
-    const j = await getJSON<{ id?: string }>(
-      `/series/${encodeURIComponent(seriesId)}/next-episode`,
-    );
-    return j?.id ?? null;
-  } catch {
-    return null;
-  }
 }
 
 /* ──────────────────────────────  helpers  ──────────────────────────────────*/
@@ -119,6 +52,17 @@ function formatHM(sec: number): string {
   const ss = s % 60;
   if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
   return `${m}:${String(ss).padStart(2, '0')}`;
+}
+
+/** "S01E05" for an episode with coordinates, else null. */
+function episodeCode(ep: Item | undefined): string | null {
+  if (!ep || ep.season_number == null || ep.episode_number == null) return null;
+  return `S${String(ep.season_number).padStart(2, '0')}E${String(ep.episode_number).padStart(2, '0')}`;
+}
+
+/** Every episode of the series, season by season. */
+function allEpisodes(seasons: readonly Season[]): Item[] {
+  return seasons.reduce<Item[]>((all, s) => all.concat(s.episodes), []);
 }
 
 /** Total-runtime label — "1h 48m" / "42m" / null when unknown. */
@@ -170,7 +114,13 @@ export default function DetailScreen({ id }: DetailScreenProps): JSX.Element {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [resumeSec, setResumeSec] = useState(0);
-  const [seasons, setSeasons] = useState<SeasonData[]>([]);
+  const [seasons, setSeasons] = useState<Season[]>([]);
+  // The episode list has been asked for (loaded or failed) — "Play" on a
+  // series resolves its episode only then, so it does not fetch it twice.
+  const [seasonsLoaded, setSeasonsLoaded] = useState(false);
+  // "Play" on a series: the episode in progress, else the next one. Resolved
+  // ahead of the press so the button can name it.
+  const [seriesTarget, setSeriesTarget] = useState<SeriesPlayTarget | null>(null);
   const [similar, setSimilar] = useState<Item[]>([]);
   const [streamToken, setStreamToken] = useState<string>('');
 
@@ -181,7 +131,7 @@ export default function DetailScreen({ id }: DetailScreenProps): JSX.Element {
   const [watched, setWatched] = useState(false);
   // Default-list id, resolved once so the "+" fast-path knows where to add.
   const defaultListIdRef = useRef<string | null>(null);
-  // Guards re-entrant Play while the series next-episode lookup is in flight.
+  // Guards re-entrant Play while the series episode lookup is in flight.
   const [resolvingPlay, setResolvingPlay] = useState(false);
 
   // BACK pops the route (matches every other screen).
@@ -196,6 +146,8 @@ export default function DetailScreen({ id }: DetailScreenProps): JSX.Element {
     setItem(null);
     setResumeSec(0);
     setSeasons([]);
+    setSeasonsLoaded(false);
+    setSeriesTarget(null);
     setSimilar([]);
 
     // Stream token authorises poster + backdrop URLs; failure just yields
@@ -220,8 +172,11 @@ export default function DetailScreen({ id }: DetailScreenProps): JSX.Element {
         setSimilar(sim);
         setWatched(loaded.watched_at != null || !!loaded.watched);
         if (loaded.type === 'series') {
-          const s = await fetchSeasons(id, ctrl.signal).catch(() => [] as SeasonData[]);
-          if (!ctrl.signal.aborted) setSeasons(s);
+          const s = await api.seriesEpisodes(id).catch(() => [] as Season[]);
+          if (!ctrl.signal.aborted) {
+            setSeasons(s);
+            setSeasonsLoaded(true);
+          }
         }
       } catch (e) {
         if (!ctrl.signal.aborted) {
@@ -265,34 +220,52 @@ export default function DetailScreen({ id }: DetailScreenProps): JSX.Element {
     return () => ctrl.abort();
   }, [id]);
 
-  // Open the player on the right id: movies play themselves; series resolve the
-  // next-up (else first) episode — the series root has no master.m3u8.
+  // Resolve the series' episode once its list is in, and again when an
+  // episode's watched state is flipped below (seasons change).
+  useEffect(() => {
+    if (!item || item.id !== id || item.type !== 'series' || !seasonsLoaded) return undefined;
+    let cancelled = false;
+    void resolveSeriesPlay(item.id, allEpisodes(seasons))
+      .then((t) => {
+        if (!cancelled) setSeriesTarget(t);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [id, item, seasons, seasonsLoaded]);
+
+  // Open the player on the right id: movies play themselves; a series plays
+  // its episode in progress, else the next one — the series root has no
+  // master.m3u8, and episode 1 is only right for a series never started.
   const goPlay = useCallback(
     (resume: boolean) => {
       if (resolvingPlay || !item) return;
-      const open = (targetId: string) => {
+      const open = (targetId: string, savedSec: number) => {
         // The player auto-resumes by default; force a clean start with
         // ?startover=1, matching chino-web's goPlayer. resume=true keeps the
         // saved position.
-        const qp = resume ? '' : resumeSec > 30 ? '?startover=1' : '';
+        const qp = !resume && savedSec > 30 ? '?startover=1' : '';
         navigate(`/player/${encodeURIComponent(targetId)}${qp}`);
       };
       if (item.type !== 'series') {
-        open(item.id);
+        open(item.id, resumeSec);
         return;
       }
+      if (seriesTarget) {
+        open(seriesTarget.episodeId, seriesTarget.resumeSec);
+        return;
+      }
+      // Pressed before the episode was resolved: resolve it now.
       setResolvingPlay(true);
-      void (async () => {
-        try {
-          const next = await fetchNextEpisodeId(item.id);
-          const firstEpisode = seasons[0]?.episodes[0]?.id;
-          open(next ?? firstEpisode ?? item.id);
-        } finally {
-          setResolvingPlay(false);
-        }
-      })();
+      void resolveSeriesPlay(item.id, allEpisodes(seasons))
+        .then((t) => {
+          if (t) open(t.episodeId, t.resumeSec);
+        })
+        .catch(() => undefined)
+        .finally(() => setResolvingPlay(false));
     },
-    [resolvingPlay, item, resumeSec, seasons],
+    [resolvingPlay, item, resumeSec, seasons, seriesTarget],
   );
 
   const toggleWatchlist = useCallback(() => {
@@ -354,8 +327,18 @@ export default function DetailScreen({ id }: DetailScreenProps): JSX.Element {
     );
   }
 
-  const canResume = resumeSec > 30;
   const isSeries = item.type === 'series';
+  // A series resumes (or plays) its episode, and the button names it.
+  const playResumeSec = isSeries ? seriesTarget?.resumeSec ?? 0 : resumeSec;
+  const canResume = playResumeSec > 30;
+  const targetCode = isSeries ? episodeCode(seriesTarget?.episode) : null;
+  const playLabel = resolvingPlay
+    ? 'Loading…'
+    : isSeries
+      ? `${canResume ? 'Resume' : 'Play'}${targetCode ? ` ${targetCode}` : ''}`
+      : canResume
+        ? `Resume ${formatHM(resumeSec)}`
+        : 'Play';
   const trailer = pickTrailer(item);
   const backdrop = api.backdropUrl(item, streamToken || undefined);
   const poster = api.posterUrl(item, streamToken || undefined);
@@ -420,7 +403,7 @@ export default function DetailScreen({ id }: DetailScreenProps): JSX.Element {
                 lands on it. */}
             <div className="mt-2 flex flex-wrap items-center gap-3">
               <PrimaryAction
-                label={resolvingPlay ? 'Loading…' : canResume ? `Resume ${formatHM(resumeSec)}` : 'Play'}
+                label={playLabel}
                 onEnter={() => goPlay(canResume)}
                 autoFocus
               />
@@ -707,7 +690,7 @@ function EpisodesBlock({
   onPlayEpisode,
   onToggleEpisodeWatched,
 }: {
-  seasons: SeasonData[];
+  seasons: Season[];
   streamToken: string;
   onPlayEpisode: (episodeId: string) => void;
   onToggleEpisodeWatched: (episodeId: string, watched: boolean) => void;
@@ -736,7 +719,7 @@ function SeasonSection({
   onPlayEpisode,
   onToggleEpisodeWatched,
 }: {
-  season: SeasonData;
+  season: Season;
   streamToken: string;
   initiallyExpanded: boolean;
   onPlayEpisode: (episodeId: string) => void;
@@ -784,7 +767,7 @@ function EpisodeRow({
   onPlay,
   onToggleWatched,
 }: {
-  episode: EpisodeRowData;
+  episode: Item;
   streamToken: string;
   onPlay: () => void;
   onToggleWatched: () => void;

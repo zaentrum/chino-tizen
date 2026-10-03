@@ -106,6 +106,27 @@ export interface ContinueWatchingItem extends Item {
   up_next?: boolean;
 }
 
+/** One season of GET /series/{id}/episodes — episodes are full Items with the
+ *  user's watched_at stamped. Season 0 holds the specials (and episodes
+ *  without coordinates); it sorts first. */
+export interface Season {
+  season: number;
+  episodes: Item[];
+}
+
+/**
+ * GET /series/{id}/next-episode[?after=]. Wire: { next: Item | null,
+ * anchor?, reason? }. With ?after= the episode after that one; without it the
+ * one after the series' last-touched episode (`anchor`), or the first episode
+ * when there is none. `next` is null at the end of the series
+ * (reason "end_of_series").
+ */
+export interface NextEpisode {
+  next: Item | null;
+  anchor?: string;
+  reason?: string;
+}
+
 /** One analyzer-detected segment (intro/credits/recap) in millisecond
  *  bounds. Returned by GET /items/{id}/segments. */
 export interface Segment {

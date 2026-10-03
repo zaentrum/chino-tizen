@@ -31,6 +31,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Play, Info, Image as ImageIcon } from 'lucide-react';
 import type { ContinueWatchingItem, Item } from '@/api/types';
 import { api } from '@/api/instance';
+import { resolveSeriesPlay } from '@/api/seriesPlay';
 import { useFocusable, useRemoteKey } from '@/tv/focus';
 import { TVKey } from '@/tv/keys';
 import { navigate } from '@/router';
@@ -235,6 +236,26 @@ export default function HomeScreen(): JSX.Element {
     navigate(`/detail/${item.id}`);
   }, []);
 
+  // The hero's Play: a movie plays itself; a series plays its episode in
+  // progress, else the next one (the series root has nothing to play). The
+  // hero pool falls back to recent shows on a small library.
+  const resolvingPlayRef = useRef(false);
+  const playHero = useCallback((it: Item) => {
+    if (it.type !== 'series') {
+      navigate(`/player/${encodeURIComponent(it.id)}`);
+      return;
+    }
+    if (resolvingPlayRef.current) return;
+    resolvingPlayRef.current = true;
+    const toDetail = `/detail/${encodeURIComponent(it.id)}`;
+    void resolveSeriesPlay(it.id)
+      .then((t) => navigate(t ? `/player/${encodeURIComponent(t.episodeId)}` : toDetail))
+      .catch(() => navigate(toDetail))
+      .finally(() => {
+        resolvingPlayRef.current = false;
+      });
+  }, []);
+
   // Split the continue-watching feed into in-progress (Continue Watching) and
   // server-substituted (Next Up) shelves — mirrors web/androidtv.
   const { cwRows, nextUpRows } = useMemo(() => {
@@ -287,7 +308,7 @@ export default function HomeScreen(): JSX.Element {
               streamToken={data.streamToken}
               index={heroIndex}
               count={data.heroPool.length}
-              onPlay={() => navigate(`/player/${hero.id}`)}
+              onPlay={() => playHero(hero)}
               onMoreInfo={() => navigate(`/detail/${hero.id}`)}
               onFocusWithin={(focused) => {
                 heroPausedRef.current = focused;

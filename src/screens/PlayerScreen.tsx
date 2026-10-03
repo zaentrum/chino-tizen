@@ -182,36 +182,21 @@ function kindLabel(kind: string): string {
 }
 
 /** API root ending at `/api`, trailing slash stripped — same derivation the
- *  shared client uses, for the one endpoint (/series/{id}/next-episode) the
- *  client doesn't surface. Mirrors DetailScreen's authorised-fetch helper. */
+ *  shared client uses, for the trickplay sprite URLs. */
 function apiBase(): string {
   return (authStore.getApiBase() ?? '').replace(/\/+$/, '');
 }
 
 /**
- * GET /v1/series/{parentId}/next-episode — the episode to auto-roll after this
- * one. Not on the shared ChinoClient (DetailScreen reads it the same way). The
- * wire shape varies across the references: chino-web reads `{ next: { id } }`,
- * chino-androidtv / DetailScreen read a flat `{ id }`. Accept both so we work
- * against whichever chino-api build the configured server runs. Best-effort —
- * any failure resolves to null and the caller falls back to BACK.
+ * The episode to auto-roll after this one: GET /v1/series/{parentId}/
+ * next-episode?after={itemId} → { next: Item | null }. Best-effort — any
+ * failure resolves to null and the caller falls back to BACK.
  */
 async function fetchNextEpisodeId(parentId: string, afterItemId: string): Promise<string | null> {
-  try {
-    const headers = new Headers({ Accept: 'application/json' });
-    const t = authStore.getToken();
-    if (t) headers.set('Authorization', `Bearer ${t}`);
-    const qs = `?after=${encodeURIComponent(afterItemId)}`;
-    const r = await fetch(
-      `${apiBase()}/v1/series/${encodeURIComponent(parentId)}/next-episode${qs}`,
-      { headers },
-    );
-    if (!r.ok) return null;
-    const j = (await r.json()) as { id?: string; next?: { id?: string } | null };
-    return j.next?.id ?? j.id ?? null;
-  } catch {
-    return null;
-  }
+  return api
+    .nextEpisode(parentId, afterItemId)
+    .then((r) => r.next?.id ?? null)
+    .catch(() => null);
 }
 
 /* ──────────────────────────────  screen  ───────────────────────────────── */
