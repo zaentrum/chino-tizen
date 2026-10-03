@@ -126,9 +126,17 @@ export class AvplayEngine implements ChinoPlayer {
       return;
     }
 
-    // Adaptive-streaming hint so AVPlay starts at a sensible bitrate and the
-    // HLS demuxer treats the source as ABR. Best-effort.
-    try { api.setStreamingProperty?.('ADAPTIVE_INFO', 'BITRATES=2000~10000'); } catch { /* ignore */ }
+    // No ADAPTIVE_INFO bitrate range. One used to be set here
+    // (BITRATES=2000~10000): read as kbps, as Samsung's examples suggest (the
+    // docs name no unit and say nothing of variants outside the range), it
+    // capped playback at 10 Mbps, while a packaged 4K/8K variant peaks at
+    // 12.6–14.6 Mbps. Our masters carry one video variant (the package's, or
+    // the transcode rung ?q= asked for), so a range cannot pick a lower rung —
+    // it can only starve or refuse the one there is. Without it AVPlay plays
+    // what the master advertises; the server already serves a stream this TV
+    // decodes (?caps= heights: a package taller than the panel's decoder falls
+    // back to a transcode). Needs a device check: a 4K/8K package on a capable
+    // panel should play at its full rate.
 
     this.installListener(startSec);
     this.syncDisplayRect();
