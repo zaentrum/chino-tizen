@@ -70,19 +70,12 @@ interface HomeData {
 }
 
 /**
- * Build the hero backdrop <img> URL. chino-api hands back a RELATIVE
- * backdrop_url ("/api/v1/items/{id}/backdrop"); the client's posterUrl already
- * knows how to resolve a relative artwork path against the API base + append
- * the stream token, so we route the backdrop through it by handing it a shallow
- * item whose poster_url is the backdrop path. Falls back to the real poster
- * (also token-resolved) when no backdrop exists. (Screens import only `api`, so
- * reusing posterUrl is the right seam rather than reaching for the base URL.)
+ * The hero <img> URL: the backdrop, else the poster. chino-api hands both back
+ * origin-relative ("/api/v1/items/{id}/backdrop"); the client resolves them on
+ * the configured server and adds the stream token.
  */
 function heroImageUrl(item: Item, streamToken: string): string {
-  if (item.backdrop_url) {
-    return api.posterUrl({ ...item, poster_url: item.backdrop_url }, streamToken);
-  }
-  return api.posterUrl(item, streamToken);
+  return item.backdrop_url ? api.backdropUrl(item, streamToken) : api.posterUrl(item, streamToken);
 }
 
 export default function HomeScreen(): JSX.Element {

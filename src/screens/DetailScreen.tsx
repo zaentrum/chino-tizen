@@ -52,6 +52,8 @@ interface EpisodeRowData {
   watched_at?: string | null;
   /** katalog emits the episode synopsis as `description` (same as Item). */
   description?: string;
+  /** The episode's still ("/api/v1/items/{id}/backdrop"), as on every Item. */
+  backdrop_url?: string;
   duration_ms?: number;
   year?: number;
 }
@@ -354,9 +356,7 @@ export default function DetailScreen({ id }: DetailScreenProps): JSX.Element {
   const canResume = resumeSec > 30;
   const isSeries = item.type === 'series';
   const trailer = pickTrailer(item);
-  const backdrop = streamToken
-    ? `${apiBase()}/v1/items/${encodeURIComponent(item.id)}/backdrop?stream=${encodeURIComponent(streamToken)}`
-    : item.backdrop_url ?? '';
+  const backdrop = api.backdropUrl(item, streamToken || undefined);
   const poster = api.posterUrl(item, streamToken || undefined);
   const runtime = runtimeLabel(item.duration_ms);
 
@@ -789,10 +789,8 @@ function EpisodeRow({
 }): JSX.Element {
   const { ref, focused } = useFocusable({ onEnter: onPlay });
   const watched = episode.watched_at != null;
-  const enc = streamToken ? encodeURIComponent(streamToken) : '';
-  const thumb = enc
-    ? `${apiBase()}/v1/items/${encodeURIComponent(episode.id)}/backdrop?stream=${enc}`
-    : '';
+  // The still, once the stream token that authorises it is there.
+  const thumb = streamToken ? api.backdropUrl(episode, streamToken) : '';
   const label =
     episode.episode_number != null
       ? `S${String(episode.season_number ?? 0).padStart(2, '0')}E${String(episode.episode_number).padStart(2, '0')}`

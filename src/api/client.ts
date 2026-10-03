@@ -10,6 +10,7 @@ import type {
   Segment,
   Watchlist,
 } from './types';
+import { apiUrl, withStreamToken } from '@/lib/artwork';
 
 /**
  * Typed client for chino-api's BFF. Endpoint paths/params mirror chino-web's
@@ -401,24 +402,27 @@ export class ChinoClient {
   }
 
   /**
-   * Poster URL for an <img>. Prefers a server-provided poster_url (relative —
-   * we make it absolute against the API base and append the stream token), else
-   * builds /v1/items/{id}/poster?stream=. The artwork proxy lives in the
-   * stream-token group, so artwork uses `?stream=`, never the OIDC bearer.
+   * A media-asset path chino-api handed out (poster_url, backdrop_url, a
+   * person's profile_url, a subtitle url) as a URL an <img> / fetch can load:
+   * absolute against the configured server, with the stream token as
+   * `?stream=` (the asset routes sit in the stream-token group; an <img>
+   * cannot send the bearer). chino-api writes these paths origin-relative
+   * ("/api/v1/..."), so they are re-rooted on the API base — see @/lib/artwork.
    */
-  posterUrl(item: Item, streamToken?: string): string {
-    const enc = streamToken ? encodeURIComponent(streamToken) : '';
-    if (item.poster_url) {
-      // Already absolute (some upstream paths may be) → leave host alone;
-      // otherwise resolve against the API base.
-      const abs = /^https?:\/\//.test(item.poster_url)
-        ? item.poster_url
-        : `${this.base()}${item.poster_url.startsWith('/') ? '' : '/'}${item.poster_url}`;
-      if (!enc) return abs;
-      return abs.includes('?') ? `${abs}&stream=${enc}` : `${abs}?stream=${enc}`;
-    }
-    const base = `${this.base()}/v1/items/${encodeURIComponent(item.id)}/poster`;
-    return enc ? `${base}?stream=${enc}` : base;
+  assetUrl(path: string | undefined, streamToken?: string): string | undefined {
+    return withStreamToken(apiUrl(this.base(), path), streamToken);
+  }
+
+  /** Poster URL for an <img>: the item's poster_url, else its poster route. */
+  posterUrl(item: { id: string; poster_url?: string }, streamToken?: string): string {
+    const path = item.poster_url || `/api/v1/items/${encodeURIComponent(item.id)}/poster`;
+    return this.assetUrl(path, streamToken) ?? '';
+  }
+
+  /** Backdrop URL for an <img>: the item's backdrop_url, else its backdrop route. */
+  backdropUrl(item: { id: string; backdrop_url?: string }, streamToken?: string): string {
+    const path = item.backdrop_url || `/api/v1/items/${encodeURIComponent(item.id)}/backdrop`;
+    return this.assetUrl(path, streamToken) ?? '';
   }
 
   // ---------------------------------------------------------------------------
