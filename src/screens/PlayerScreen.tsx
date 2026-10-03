@@ -34,18 +34,31 @@ import {
 import type { Item, PlayInfo, Segment } from '@/api/types';
 import { api } from '@/api/instance';
 import { authStore } from '@/auth/session';
-import { createPlayer, detectCaps, type ChinoPlayer } from '@/player';
+import {
+  createPlayer,
+  detectCaps,
+  type ChinoPlayer,
+  type PlayerSubtitle,
+  type SubtitleCapableEngine,
+} from '@/player';
 import {
   createProgressGuard,
   mayWriteProgress,
   resumeStartSec,
   type ProgressGuard,
 } from '@/lib/progress';
+import {
+  buildSubtitleTracks,
+  pickDefaultSubtitle,
+  playingAudioLanguage,
+  subtitleKind,
+} from '@/lib/subtitles';
 import { useFocusable, useRemoteKey } from '@/tv/focus';
 import { TVKey } from '@/tv/keys';
 import { navigate, back, useRoute } from '@/router';
 import { useSettings } from '@/state/settings';
 import { Spinner } from '@/components/Spinner';
+import { SubtitleOverlay } from '@/components/SubtitleOverlay';
 
 /* ──────────────────────────────  Tunables  ─────────────────────────────── */
 
@@ -250,8 +263,11 @@ export default function PlayerScreen(): JSX.Element {
   const [duration, setDuration] = useState(0);
   // Engine tracks become available after load(); read them off 'ready'.
   const [audioTracks, setAudioTracks] = useState<{ id: string; label: string }[]>([]);
-  const [textTracks, setTextTracks] = useState<{ id: string; label: string }[]>([]);
-  const [activeTextId, setActiveTextId] = useState<string | null>(null);
+  // Subtitles: chino-api's tracks, as chino-web offers them (@/lib/subtitles),
+  // and the one on screen (null = off). Text tracks are drawn by
+  // <SubtitleOverlay>; PGS only where the engine draws it (hls.js).
+  const [subtitles, setSubtitles] = useState<PlayerSubtitle[]>([]);
+  const [activeSubId, setActiveSubId] = useState<string | null>(null);
 
   // Segments (intro/credits/recap) for the skip affordance + auto-skip.
   const [segments, setSegments] = useState<Segment[]>([]);
@@ -370,21 +386,8 @@ export default function PlayerScreen(): JSX.Element {
     // ready / error can't be missed.
     const offReady = player.on('ready', () => {
       setDuration(player.duration());
-      // Track lists become valid once the source is parsed.
+      // Audio renditions become valid once the source is parsed.
       setAudioTracks(player.audioTracks());
-      const texts = player.textTracks();
-      setTextTracks(texts);
-      // Honour the preferred subtitle language if a matching embedded track
-      // exists (web auto-pick parity). Label match is best-effort — the engine
-      // labels embedded tracks by language.
-      const pref = settings.preferredSubtitleLang?.toLowerCase();
-      if (pref && pref !== 'off') {
-        const match = texts.find((t) => t.label.toLowerCase().includes(pref));
-        if (match) {
-          player.setTextTrack(match.id);
-          setActiveTextId(match.id);
-        }
-      }
     });
     const offPlaying = player.on('playing', () => {
       pausedRef.current = false;
@@ -423,16 +426,41 @@ export default function PlayerScreen(): JSX.Element {
       try {
         // The saved position comes from GET /items/{id}/progress — the item
         // payload carries none. null = it could not be read.
-        const [loadedItem, info, token, savedSec] = await Promise.all([
+        const [loadedItem, info, token, savedSec, sidecars] = await Promise.all([
           api.getItem(itemId),
           api.playInfo(itemId, caps).catch(() => null),
           api.streamToken(),
           api.getProgress(itemId).catch(() => null),
+          api.subtitles(itemId).catch(() => null),
         ]);
         if (cancelled) return;
         setItem(loadedItem);
         setPlayInfo(info);
         streamTokenRef.current = token;
+
+        // Subtitles: the sidecars + the embedded text streams, labelled by
+        // language. Off by default unless the audio is not in the preferred
+        // subtitle language — then that language's track comes on. Should
+        // /subtitles fail, the item's own rows still name the sidecars (their
+        // url is the documented /api/v1/play/subs/{id}.vtt).
+        const drawsPgs = 'setSubtitles' in player;
+        const tracks = buildSubtitleTracks({
+          itemId,
+          sidecars: sidecars ?? loadedItem.subtitles ?? [],
+          embedded: info?.subtitle_tracks ?? [],
+          resolve: (path) => api.assetUrl(path, token) ?? path,
+          pgs: drawsPgs,
+        });
+        const initialSub = pickDefaultSubtitle(tracks, {
+          audioLang: playingAudioLanguage(info?.audio_tracks),
+          preferredLang: settings.preferredSubtitleLang,
+        });
+        setSubtitles(tracks);
+        setActiveSubId(initialSub);
+        if (drawsPgs) {
+          (player as ChinoPlayer & SubtitleCapableEngine).setSubtitles(tracks);
+          player.setTextTrack(initialSub);
+        }
 
         const resolvedQuality = info?.default_quality ?? '';
         setQuality(resolvedQuality);
@@ -794,12 +822,20 @@ export default function PlayerScreen(): JSX.Element {
       ? `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')}`
       : null;
   const qualities = playInfo?.qualities ?? [];
+  // The text track on screen, if one is: PGS is the engine's to draw.
+  const activeSub = subtitles.find((s) => s.id === activeSubId) ?? null;
+  const activeTextUrl =
+    activeSub && subtitleKind(activeSub.format) === 'text' ? activeSub.url : null;
 
   return (
     <div className="relative h-screen w-full overflow-hidden bg-black text-text">
       {/* The engine renders here (a <video> for hls, a native <object> for
           AVPlay). Fills the screen behind every overlay. */}
       <div ref={stageRef} className="absolute inset-0 h-full w-full bg-black" />
+
+      {/* Text subtitles, drawn here on both engines (AVPlay draws none);
+          raised above the control bar while it is up. */}
+      <SubtitleOverlay url={activeTextUrl} time={current} lifted={chromeVisible} />
 
       {/* Loading / buffering overlay — Spinner per the contract. */}
       {showSpinner ? (
@@ -933,11 +969,11 @@ export default function PlayerScreen(): JSX.Element {
             </ControlButton>
           ) : null}
 
-          {/* Subtitles menu — shown when there are any text tracks. */}
-          {textTracks.length > 0 ? (
+          {/* Subtitles menu — shown when the title has any subtitles. */}
+          {subtitles.length > 0 ? (
             <ControlButton
               label="Subtitles"
-              active={openMenu === 'subtitles' || activeTextId != null}
+              active={openMenu === 'subtitles' || activeSubId != null}
               onEnter={() => setOpenMenu((m) => (m === 'subtitles' ? null : 'subtitles'))}
             >
               <Captions className="h-6 w-6" />
@@ -976,17 +1012,19 @@ export default function PlayerScreen(): JSX.Element {
         <DpadMenu
           title="Subtitles"
           rows={[
-            { id: '__off__', label: 'Off', selected: activeTextId == null },
-            ...textTracks.map((t) => ({
+            { id: '__off__', label: 'Off', selected: activeSubId == null },
+            ...subtitles.map((t) => ({
               id: t.id,
               label: t.label,
-              selected: t.id === activeTextId,
+              selected: t.id === activeSubId,
             })),
           ]}
           onPick={(id) => {
             const next = id === '__off__' ? null : id;
-            playerRef.current?.setTextTrack(next);
-            setActiveTextId(next);
+            // The engine draws PGS only; a text track (or off) clears it.
+            const p = playerRef.current;
+            if (p && 'setSubtitles' in p) p.setTextTrack(next);
+            setActiveSubId(next);
             setOpenMenu(null);
             noteInteraction();
           }}

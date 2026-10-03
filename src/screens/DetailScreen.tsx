@@ -37,6 +37,7 @@ import { useFocusable, useRemoteKey } from '@/tv/focus';
 import { TVKey } from '@/tv/keys';
 import { navigate, back } from '@/router';
 import { Spinner } from '@/components/Spinner';
+import { languageName } from '@/lib/subtitles';
 
 /* ───────────────────────────  episode wire types  ──────────────────────────
  * Shapes match chino-api's GET /v1/series/{id}/episodes (web useSeriesEpisodes /
@@ -611,8 +612,9 @@ function MetaRow({
 /* ─────────────────────────  footer (subs / analyzed)  ───────────────────────*/
 
 function FooterGrid({ item }: { item: Item }): JSX.Element | null {
+  // The languages by name, as the player's menu labels them.
   const subtitleLabel = Array.from(
-    new Set((item.subtitles ?? []).map((s) => s.label || s.lang).filter(Boolean)),
+    new Set((item.subtitles ?? []).map((s) => languageName(s.lang) || s.label).filter(Boolean)),
   ).join(', ');
   const seg = item.segments;
   const analyzedLabel =

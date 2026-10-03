@@ -115,6 +115,21 @@ export interface Segment {
   end_ms: number;
 }
 
+/** An audio or subtitle track as GET /items/{id}/play/info lists it. A source
+ *  file's rows come from ffprobe and carry the per-kind stream `index` (what
+ *  /play/subtitles/{index}.vtt extracts); a packaged title's rows come from its
+ *  manifest (audio: the renditions; subtitles: the sidecar files, no index).
+ *  Languages are ISO 639-2 ("eng"), "und" when untagged. */
+export interface PlayInfoTrack {
+  index?: number;
+  codec?: string;
+  language?: string;
+  title?: string;
+  default?: boolean;
+  forced?: boolean;
+  channels?: number;
+}
+
 /** Result of GET /items/{id}/play/info — the server's transcode decision
  *  plus the quality ladder it can serve. `qualities` is null on packaged
  *  items (the master playlist owns the renditions there). */
@@ -123,6 +138,9 @@ export interface PlayInfo {
   qualities: { id: string; label: string; height?: number }[];
   default_quality?: string;
   mode?: string;
+  /** The default one is what plays. */
+  audio_tracks: PlayInfoTrack[];
+  subtitle_tracks: PlayInfoTrack[];
 }
 
 /** A cast/crew person summary (search result). */

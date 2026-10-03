@@ -1,8 +1,10 @@
 // hls.js + HTMLVideoElement engine. The off-device default (desktop dev) and
 // the on-device fallback when AVPlay can't decode a stream. Mirrors
 // chino-web's PlayerPage hls.js configuration (buffer caps, retry knobs,
-// circuit-breaker error handling) and its subtitle handling: native <track>
-// for text formats (webvtt/srt) and libpgs-js's canvas overlay for PGS.
+// circuit-breaker error handling) and draws PGS subtitles with libpgs-js's
+// canvas overlay. Text subtitles (webvtt/srt) are drawn by the player
+// screen's own overlay, the same on both engines — a .srt sidecar cannot ride
+// a native <track>, and AVPlay has no renderer at all.
 //
 // Single-variant ladder: chino-stream's master.m3u8 emits ONE video variant
 // matching ?q=. Changing quality therefore means reloading a different master
@@ -26,13 +28,6 @@ import type {
   SubtitleCapableEngine,
 } from './types';
 
-// PGS / bitmap subtitle codecs have no <track> renderer — PGS rides the
-// libpgs canvas, the rest are unrenderable on the web pipeline. Kept in sync
-// with chino-web's NO_WEB_RENDERER / BITMAP_SUB_CODECS filtering (the screen
-// is expected to pre-filter, but we double-guard so a stray .sup never mounts
-// as a broken <track>).
-const BITMAP_FORMATS = new Set(['pgs', 'vobsub', 'dvdsub', 'dvb', 'dvbsub', 'xsub']);
-
 export class HlsEngine implements ChinoPlayer, SubtitleCapableEngine {
   private video: HTMLVideoElement | null = null;
   private hls: Hls | null = null;
@@ -42,9 +37,9 @@ export class HlsEngine implements ChinoPlayer, SubtitleCapableEngine {
   private pgs: PgsRenderer | null = null;
   private pgsCanvas: HTMLCanvasElement | null = null;
 
-  // Selectable sidecar / embedded subtitles handed in by the screen.
+  // The PGS tracks the screen may select (text tracks never reach the engine).
   private subs: PlayerSubtitle[] = [];
-  // Currently-mounted <track> id (null = subtitles off).
+  // The PGS track being drawn (null = none).
   private activeSubId: string | null = null;
 
   // Event fan-out. Keyed by PlayerEvent; each value is a Set of callbacks.
@@ -205,8 +200,7 @@ export class HlsEngine implements ChinoPlayer, SubtitleCapableEngine {
     });
 
     this.hls = hls;
-    // Re-mount any active subtitle now that a fresh source is loading (a
-    // quality-switch reload drops the old <track>).
+    // Re-mount any active PGS track now that a fresh source is loading.
     this.applySubtitle();
   }
 
@@ -276,27 +270,23 @@ export class HlsEngine implements ChinoPlayer, SubtitleCapableEngine {
   }
 
   textTracks(): PlayerTextTrack[] {
-    // Selectable subtitles come from the screen-supplied sidecar list, not
-    // from hls.js's in-manifest text tracks (our streams carry subtitles as
-    // sidecars / embedded VTT proxied per chino-api router).
+    // The PGS tracks the screen handed in. The screen builds its subtitle
+    // menu from chino-api's list itself (sidecars + embedded streams), not
+    // from hls.js's in-manifest text tracks.
     return this.subs.map((s) => ({ id: s.id, label: s.label }));
   }
 
   setTextTrack(id: string | null): void {
-    this.activeSubId = id;
+    // An id that is not one of the PGS tracks (a text track, drawn by the
+    // screen) turns the PGS overlay off.
+    this.activeSubId = id && this.subs.some((s) => s.id === id) ? id : null;
     this.applySubtitle();
   }
 
-  // SubtitleCapableEngine — screen replaces the selectable set (e.g. after
-  // /subtitles + /play/info merge). Mirrors chino-web's mergedSubs feeding
-  // the switcher.
+  // SubtitleCapableEngine — the PGS tracks the screen may select. Anything
+  // else is ignored: text tracks are the screen's overlay's.
   setSubtitles(subs: PlayerSubtitle[]): void {
-    this.subs = subs.filter((s) => {
-      const fmt = (s.format || '').toLowerCase();
-      // Keep PGS (libpgs renders it) and all text formats; drop the
-      // unrenderable bitmap codecs.
-      return fmt === 'pgs' || !BITMAP_FORMATS.has(fmt);
-    });
+    this.subs = subs.filter((s) => (s.format || '').toLowerCase() === 'pgs');
     // Re-assert whatever is currently selected against the new list.
     if (this.activeSubId && !this.subs.some((s) => s.id === this.activeSubId)) {
       this.activeSubId = null;
@@ -374,67 +364,15 @@ export class HlsEngine implements ChinoPlayer, SubtitleCapableEngine {
     });
   }
 
-  // Mount / unmount the active subtitle. Text tracks ride a native <track>
-  // (mode="showing"); PGS rides the libpgs canvas overlay. Only ever one
-  // active at a time on the TV (no dual-subtitle on a 10-foot UI).
+  // Mount / unmount the active PGS track on the libpgs canvas overlay. Only
+  // ever one active at a time on the TV (no dual-subtitle on a 10-foot UI).
   private applySubtitle(): void {
-    const v = this.video;
-    if (!v) return;
-
-    // Remove every previously-mounted <track> so we don't leave stale cue
-    // lists behind (and so Chrome doesn't prefetch tracks we're not showing).
-    for (const trackEl of Array.from(v.querySelectorAll('track'))) {
-      trackEl.remove();
-    }
-
+    if (!this.video) return;
     const active = this.activeSubId
       ? this.subs.find((s) => s.id === this.activeSubId) ?? null
       : null;
-
-    // PGS path — (re)create the libpgs renderer for the active PGS track,
-    // tear it down otherwise.
-    if (active && (active.format || '').toLowerCase() === 'pgs') {
-      this.mountPgs(active);
-      return;
-    }
-    this.disposePgs();
-
-    // Text path — mount a single native <track mode="showing">. We re-anchor
-    // cues above the chrome the same way chino-web does (line 85 from top).
-    if (active) {
-      const track = document.createElement('track');
-      track.id = active.id;
-      track.kind = 'subtitles';
-      track.src = active.url;
-      track.srclang = active.lang;
-      track.label = active.label;
-      v.appendChild(track);
-      // The <track> element's TextTrack appears asynchronously; flip it to
-      // showing once it's available and lift cues out of the controls zone.
-      const showAndLift = () => {
-        for (const t of Array.from(v.querySelectorAll('track'))) {
-          const tt = (t as HTMLTrackElement).track;
-          if (!tt) continue;
-          tt.mode = t.id === active.id ? 'showing' : 'disabled';
-          const cues = tt.cues;
-          if (cues) {
-            for (let i = 0; i < cues.length; i++) {
-              const c = cues[i] as VTTCue;
-              if (c.line === 'auto') {
-                c.snapToLines = false;
-                c.line = 85;
-              }
-            }
-          }
-        }
-      };
-      track.addEventListener('load', showAndLift);
-      // Also reassert on the textTracks addtrack event (some UAs surface the
-      // track before the load event).
-      const onAdd = () => showAndLift();
-      v.textTracks.addEventListener('addtrack', onAdd, { once: true });
-      showAndLift();
-    }
+    if (active) this.mountPgs(active);
+    else this.disposePgs();
   }
 
   private mountPgs(sub: PlayerSubtitle): void {

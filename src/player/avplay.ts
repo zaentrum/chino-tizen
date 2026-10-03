@@ -238,6 +238,11 @@ export class AvplayEngine implements ChinoPlayer {
     try { this.api?.setSelectTrack('AUDIO', idx); } catch { /* ignore */ }
   }
 
+  // AVPlay's own TEXT tracks are the ones inside the stream; AVPlay draws
+  // none of them (it would hand their text to onsubtitlechange). The player
+  // screen offers chino-api's subtitles instead — the sidecars and embedded
+  // streams chino-web offers — and draws them in its own overlay, so these two
+  // methods only serve the engine contract.
   textTracks(): PlayerTextTrack[] {
     return this.tracks
       .filter((t) => t.type === 'TEXT')

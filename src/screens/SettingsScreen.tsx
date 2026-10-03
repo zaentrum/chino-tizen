@@ -147,7 +147,7 @@ export default function SettingsScreen(): JSX.Element {
 
             <Section
               title="Subtitles"
-              subtitle="Default subtitle language. Picks the closest matching track on each item. Off keeps subtitles disabled by default."
+              subtitle="Your subtitle language. Subtitles in it come on by default when a title's audio is in another language. Off keeps subtitles off by default."
             >
               <LangPickerRow
                 options={SUB_LANGS}

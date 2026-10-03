@@ -89,29 +89,35 @@ export interface ChinoPlayer {
 export type PlayerKind = 'avplay' | 'hls';
 
 /**
- * Subtitle descriptor the screen hands to an engine via `setTextTracks`.
- * Mirrors chino-web's merged subtitle entry: text formats (webvtt/srt) ride
- * the native <track>/AVPlay sidecar path, `pgs` rides the libpgs canvas
- * overlay. URLs already carry the `?stream=` token (see chino-api
- * proxySidecarSubtitle / proxyEmbeddedSubtitle).
+ * A subtitle track as the player offers it (see @/lib/subtitles): chino-web's
+ * merged list of chino-api's sidecars and the embedded text streams. Text
+ * formats (webvtt/srt) are drawn by the player screen's own overlay on every
+ * engine; `pgs` needs an engine that renders it (SubtitleCapableEngine). URLs
+ * are absolute and carry the `?stream=` token (chino-api
+ * proxySidecarSubtitle / proxyEmbeddedSubtitle sit in the stream-token group).
  */
 export interface PlayerSubtitle {
   id: string;
+  /** What the menu shows: the language by name ("English (SDH)"). */
   label: string;
+  /** ISO 639-1 where known ("en"), "" when the track names no language. */
   lang: string;
   url: string;
-  /** 'pgs' → libpgs canvas overlay; anything else → native text track. */
+  /** 'pgs' → libpgs canvas overlay; anything else → text. */
   format?: string;
   default?: boolean;
+  /** Covers only the foreign-language lines of the original audio. */
+  forced?: boolean;
 }
 
 /**
- * Optional capability an engine MAY expose for sidecar subtitles. Declared
- * here (not on ChinoPlayer) because the hls engine renders subtitles itself
- * via <track> + libpgs, while AVPlay's subtitle plumbing differs; the screen
- * feature-detects with `'setSubtitles' in player`.
+ * Optional capability: an engine that draws bitmap (PGS) subtitles itself —
+ * the hls.js engine, through libpgs on a canvas over its <video>. AVPlay has
+ * no such renderer, so PGS tracks are not offered there. The screen
+ * feature-detects with `'setSubtitles' in player`, hands it the PGS tracks and
+ * selects one with setTextTrack(id) (null when a text track or none is on).
  */
 export interface SubtitleCapableEngine {
-  /** Replace the set of selectable sidecar / embedded subtitle tracks. */
+  /** Replace the set of PGS tracks the engine may be asked to draw. */
   setSubtitles(subs: PlayerSubtitle[]): void;
 }

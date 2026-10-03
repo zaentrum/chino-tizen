@@ -7,7 +7,9 @@ import type {
   Person,
   PersonDetail,
   PlayInfo,
+  PlayInfoTrack,
   Segment,
+  Subtitle,
   Watchlist,
 } from './types';
 import { apiUrl, withStreamToken } from '@/lib/artwork';
@@ -343,6 +345,8 @@ export class ChinoClient {
       mode?: string;
       default_quality?: string;
       qualities?: { name?: string; id?: string; label?: string; height?: number }[] | null;
+      audio_tracks?: PlayInfoTrack[] | null;
+      subtitle_tracks?: PlayInfoTrack[] | null;
     }>(`/items/${encodeURIComponent(id)}/play/info${qs}`);
     return {
       duration_ms: j.duration_ms ?? 0,
@@ -353,7 +357,22 @@ export class ChinoClient {
         label: q.label ?? q.name ?? '',
         height: q.height,
       })),
+      audio_tracks: j.audio_tracks ?? [],
+      subtitle_tracks: j.subtitle_tracks ?? [],
     };
+  }
+
+  /**
+   * GET /v1/items/{id}/subtitles — the item's sidecar subtitles. Wire:
+   * { subtitles: [{ id, lang, label?, format?, default?, url }] }, `url`
+   * origin-relative ("/api/v1/play/subs/{id}.vtt", stream-token group; resolve
+   * it with assetUrl). An empty list is the normal case.
+   */
+  async subtitles(id: string): Promise<Subtitle[]> {
+    const j = await this.getJSON<{ subtitles?: Subtitle[] | null }>(
+      `/items/${encodeURIComponent(id)}/subtitles`,
+    );
+    return j.subtitles ?? [];
   }
 
   /**
