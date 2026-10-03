@@ -52,9 +52,13 @@ jobs:
           submodules: recursive
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # 24: the unit tests are TypeScript run by node --test directly, which
+          # needs a Node that strips types by itself (22.18+); 20 cannot.
+          node-version: 24
           cache: npm
       - run: npm ci
+      - name: Unit tests
+        run: npm test
       - run: npm run build
       - uses: actions/upload-artifact@v4
         with:
