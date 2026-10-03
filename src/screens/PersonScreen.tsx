@@ -12,9 +12,10 @@
 // biography asked for in the TV's languages. The portrait (profile_url) is
 // served like a poster, from the stream-token group, so it carries ?stream=.
 //
-// D-pad: the first title takes focus on entry. When the biography is cut
-// short, UP reaches "Read more", which opens it whole in an overlay that
-// UP/DOWN scroll; BACK closes the overlay first, then leaves the page.
+// D-pad: the first title takes focus on entry, the page staying at its top so
+// the header shows. When the biography is cut short, UP reaches "Read more",
+// which opens it whole in an overlay that UP/DOWN scroll; BACK closes the
+// overlay first, then leaves the page.
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
@@ -177,7 +178,10 @@ function PersonView({
                 key={item.id}
                 item={item}
                 streamToken={streamToken}
+                // The first title takes focus, but the page stays at its top:
+                // the header (portrait, name, facts) is what entry shows.
                 autoFocus={i === 0}
+                autoFocusScroll={false}
                 credit={formatRoles(item.roles) || undefined}
                 onEnter={() => navigate(`/detail/${item.id}`)}
               />

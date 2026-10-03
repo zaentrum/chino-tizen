@@ -416,6 +416,10 @@ export interface UseFocusableOptions {
   onFocus?: () => void;
   focusKey?: string;
   autoFocus?: boolean;
+  /** Scroll the element into view when autoFocus focuses it on mount
+   *  (default true). False keeps the page where it is — for a first item
+   *  below a header the screen wants seen on entry. */
+  autoFocusScroll?: boolean;
   disabled?: boolean;
 }
 
@@ -465,7 +469,7 @@ export function useFocusable(opts: UseFocusableOptions = {}): UseFocusableResult
           // are registered first, and layout has settled for scrollIntoView.
           queueMicrotask(() => {
             if (elRef.current === el && engine.current() !== el) {
-              engine.focus(el);
+              engine.focus(el, { scroll: optsRef.current.autoFocusScroll !== false });
             }
           });
         }

@@ -17,6 +17,9 @@ interface FocusableCardProps {
   /** Optional stream token so the poster URL is authorised (api.posterUrl). */
   streamToken?: string;
   autoFocus?: boolean;
+  /** With autoFocus: scroll the card into view when it takes focus on mount
+   *  (default true). */
+  autoFocusScroll?: boolean;
   focusKey?: string;
   /** Notify the parent shelf when this card takes focus (rail can scroll it). */
   onFocus?: () => void;
@@ -44,11 +47,12 @@ export function FocusableCard({
   onEnter,
   streamToken,
   autoFocus,
+  autoFocusScroll,
   focusKey,
   onFocus,
   credit,
 }: FocusableCardProps) {
-  const { ref, focused } = useFocusable({ onEnter, autoFocus, focusKey, onFocus });
+  const { ref, focused } = useFocusable({ onEnter, autoFocus, autoFocusScroll, focusKey, onFocus });
   const poster = api.posterUrl(item, streamToken);
   const pct = progressPct(item);
   const isEpisode = item.type === 'episode';
