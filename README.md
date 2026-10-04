@@ -21,7 +21,9 @@ It follows **chino-web**, the reference client, for UI and streaming logic
    token endpoints.
 3. Sign in with the on-screen device code on a second screen.
 
-You can change servers later from **Settings → Change server**.
+You can change servers later from **Settings → Change server**, and
+**Settings → Delete Account** deletes your account on the server (after
+asking) and signs it out on the TV.
 
 Sign-in uses the OAuth 2.0 Device Authorization Grant (RFC 8628). Register a
 public client for the TV in your OIDC issuer's clients (a device-flow-capable
