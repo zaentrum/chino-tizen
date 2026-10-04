@@ -123,7 +123,8 @@ export interface ContinueWatchingItem extends Item {
 
 /** One season of GET /series/{id}/episodes — episodes are full Items with the
  *  user's watched_at stamped. Season 0 holds the specials (and episodes
- *  without coordinates); it sorts first. */
+ *  without coordinates); it sorts first on the wire (the episode list shows
+ *  it last, @/lib/seasons). */
 export interface Season {
   season: number;
   episodes: Item[];

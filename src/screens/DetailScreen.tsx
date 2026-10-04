@@ -37,6 +37,7 @@ import { navigate, back } from '@/router';
 import { Spinner } from '@/components/Spinner';
 import { PersonAvatar } from '@/components/PersonAvatar';
 import { groupCredits } from '@/lib/credits';
+import { opensExpanded, seasonTitle, seasonsInOrder } from '@/lib/seasons';
 import { languageName } from '@/lib/subtitles';
 
 /** GET /v1/items/{id}/progress — saved resume position (seconds), for the
@@ -699,8 +700,10 @@ function CreditName({ person }: { person: CastEntry }): JSX.Element {
  * Vertical accordion: an "Episodes" heading, one collapsible season card per
  * season (header focusable, ENTER toggles), expanding into full-width episode
  * rows (16:9 thumb + SxxExx label + title + runtime + 2-line synopsis + a
- * trailing per-episode watched toggle). Mirrors chino-web EpisodesList +
- * androidtv EpisodesBlock. */
+ * trailing per-episode watched toggle). The numbered seasons in order, the
+ * first open; the specials (season 0, first in chino-api's list) last and
+ * closed (@/lib/seasons). Mirrors chino-web EpisodesList + androidtv
+ * EpisodesBlock. */
 
 function EpisodesBlock({
   seasons,
@@ -716,12 +719,12 @@ function EpisodesBlock({
   return (
     <section className="mt-12 flex flex-col gap-4">
       <h2 className="text-2xl font-semibold text-white">Episodes</h2>
-      {seasons.map((season, i) => (
+      {seasonsInOrder(seasons).map((season, i) => (
         <SeasonSection
           key={season.season}
           season={season}
           streamToken={streamToken}
-          initiallyExpanded={i === 0}
+          initiallyExpanded={opensExpanded(i)}
           onPlayEpisode={onPlayEpisode}
           onToggleEpisodeWatched={onToggleEpisodeWatched}
         />
@@ -754,7 +757,7 @@ function SeasonSection({
           focused ? 'bg-border' : ''
         }`}
       >
-        <span className="font-semibold text-white">Season {season.season}</span>
+        <span className="font-semibold text-white">{seasonTitle(season.season)}</span>
         <span className="flex-1 text-base text-muted">{season.episodes.length} episodes</span>
         {expanded ? (
           <ChevronDown className="h-5 w-5 text-muted" />
