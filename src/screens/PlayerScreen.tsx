@@ -38,6 +38,7 @@ import {
   createPlayer,
   detectCaps,
   type ChinoPlayer,
+  type PlayerAudioTrack,
   type PlayerSubtitle,
   type SubtitleCapableEngine,
 } from '@/player';
@@ -47,6 +48,7 @@ import {
   resumeStartSec,
   type ProgressGuard,
 } from '@/lib/progress';
+import { audioTrackFor, type AudioWant } from '@/lib/audio';
 import { chosenQuality, qualityMenu } from '@/lib/qualities';
 import {
   buildSubtitleTracks,
@@ -248,8 +250,13 @@ export default function PlayerScreen(): JSX.Element {
   const [firstFrame, setFirstFrame] = useState(false);
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
-  // Engine tracks become available after load(); read them off 'ready'.
-  const [audioTracks, setAudioTracks] = useState<{ id: string; label: string }[]>([]);
+  // The engine's audio tracks, read off its 'tracks' event (after every load).
+  const [audioTracks, setAudioTracks] = useState<PlayerAudioTrack[]>([]);
+  // The audio to play (@/lib/audio): Settings → Audio's language until a
+  // track is picked in the menu, then that track. Put on in every source the
+  // engine loads — a quality switch reloads a master that starts on its
+  // DEFAULT audio.
+  const audioWantRef = useRef<AudioWant | null>(null);
   // Subtitles: chino-api's tracks, as chino-web offers them (@/lib/subtitles),
   // and the one on screen (null = off). Text tracks are drawn by
   // <SubtitleOverlay>; PGS only where the engine draws it (hls.js).
@@ -370,12 +377,20 @@ export default function PlayerScreen(): JSX.Element {
     let cancelled = false;
     const player = createPlayer(stage);
     playerRef.current = player;
+    // "Original" in Settings is no preference: the source's default plays.
+    audioWantRef.current = settings.preferredAudioLang ? { lang: settings.preferredAudioLang } : null;
 
     // Engine event wiring. All registered before load() so the first frame /
     // ready / error can't be missed.
     const offReady = player.on('ready', () => {
       setDuration(player.duration());
-      // Audio renditions become valid once the source is parsed.
+    });
+    // The audio tracks of the source loaded: the one wanted goes on — the
+    // preferred language, or the track picked before a quality switch —
+    // and the menu lists them.
+    const offTracks = player.on('tracks', () => {
+      const id = audioTrackFor(player.audioTracks(), audioWantRef.current);
+      if (id) player.setAudioTrack(id);
       setAudioTracks(player.audioTracks());
     });
     const offPlaying = player.on('playing', () => {
@@ -429,9 +444,11 @@ export default function PlayerScreen(): JSX.Element {
 
         // Subtitles: the sidecars + the embedded text streams, labelled by
         // language. Off by default unless the audio is not in the preferred
-        // subtitle language — then that language's track comes on. Should
-        // /subtitles fail, the item's own rows still name the sidecars (their
-        // url is the documented /api/v1/play/subs/{id}.vtt).
+        // subtitle language — then that language's track comes on. The audio
+        // is the preferred audio language where the title has it (the engine
+        // switches to it), else the default track's. Should /subtitles fail,
+        // the item's own rows still name the sidecars (their url is the
+        // documented /api/v1/play/subs/{id}.vtt).
         const drawsPgs = 'setSubtitles' in player;
         const tracks = buildSubtitleTracks({
           itemId,
@@ -441,7 +458,7 @@ export default function PlayerScreen(): JSX.Element {
           pgs: drawsPgs,
         });
         const initialSub = pickDefaultSubtitle(tracks, {
-          audioLang: playingAudioLanguage(info?.audio_tracks),
+          audioLang: playingAudioLanguage(info?.audio_tracks, settings.preferredAudioLang),
           preferredLang: settings.preferredSubtitleLang,
         });
         setSubtitles(tracks);
@@ -502,6 +519,7 @@ export default function PlayerScreen(): JSX.Element {
       // onDispose + chino-web's pagehide flush).
       postProgressNow();
       offReady();
+      offTracks();
       offPlaying();
       offPaused();
       offBuffering();
@@ -515,7 +533,7 @@ export default function PlayerScreen(): JSX.Element {
     // Mount-once: the player + listeners are reused across the play session.
     // itemId is stable for one mount (App keys the screen by the item id, so
     // a new id is a fresh mount with fresh refs). settings is read for the
-    // initial preferred-sub pick only.
+    // initial audio and subtitle picks only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itemId]);
 
@@ -993,9 +1011,18 @@ export default function PlayerScreen(): JSX.Element {
       {openMenu === 'audio' ? (
         <DpadMenu
           title="Audio"
-          rows={audioTracks.map((t) => ({ id: t.id, label: t.label, selected: false }))}
+          rows={audioTracks.map((t) => ({ id: t.id, label: t.label, selected: !!t.selected }))}
           onPick={(id) => {
-            playerRef.current?.setAudioTrack(id);
+            const p = playerRef.current;
+            const place = audioTracks.findIndex((t) => t.id === id);
+            const picked = audioTracks[place];
+            if (p && picked) {
+              // The pick, not the setting, from now on: found again in the
+              // source a quality switch loads (its language, label, place).
+              audioWantRef.current = { lang: picked.lang, label: picked.label, place };
+              p.setAudioTrack(id);
+              setAudioTracks(p.audioTracks());
+            }
             setOpenMenu(null);
             noteInteraction();
           }}

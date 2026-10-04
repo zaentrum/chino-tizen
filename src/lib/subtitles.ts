@@ -103,6 +103,27 @@ export function normalizeLanguage(tag: string | null | undefined): string {
 }
 
 /**
+ * The ISO 639-1 code of a language the text names outright — a code or a
+ * name the table knows ("ger", "de-CH", "German", "Deutsch"), or a name
+ * leading it ("German 5.1", "English (SDH)") — else "". Unlike
+ * normalizeLanguage it passes no unknown word through: it reads a track's
+ * label, which may say anything ("No commentary" is not Norwegian).
+ */
+export function knownLanguage(text: string | null | undefined): string {
+  const t = (text ?? '').trim().toLowerCase();
+  if (!t) return '';
+  const whole = BY_TAG.get(t);
+  if (whole) return whole.code;
+  // A tag with a region or a script: "de-CH", "pt_BR".
+  const tag = /^([a-z]{2,3})(?:[-_][a-z0-9]{2,8})+$/.exec(t);
+  if (tag) return BY_TAG.get(tag[1])?.code ?? '';
+  // A name first, then more: names only — two- and three-letter codes are
+  // words too ("It", "In", "Ger…").
+  const first = t.split(/[\s(·,:|–—-]+/)[0];
+  return first.length >= 4 ? BY_TAG.get(first)?.code ?? '' : '';
+}
+
+/**
  * A language's English name ("de", "ger", "deu" → "German"); "" when the tag
  * names no language. A tag outside the table gets the platform's name for it
  * where the runtime has Intl.DisplayNames (newer TVs, desktop), else the tag.
@@ -284,10 +305,16 @@ export interface AudioTrackInfo {
   default?: boolean;
 }
 
-/** The language of the audio that plays: the default track's, else the
- *  first's; "" when unknown. */
-export function playingAudioLanguage(tracks: readonly AudioTrackInfo[] | null | undefined): string {
+/** The language of the audio that plays: the preferred one (Settings →
+ *  Audio) when a track is in it — the player switches to that track — else
+ *  the default track's, else the first's; "" when unknown. */
+export function playingAudioLanguage(
+  tracks: readonly AudioTrackInfo[] | null | undefined,
+  preferred?: string | null,
+): string {
   const list = tracks ?? [];
+  const want = normalizeLanguage(preferred);
+  if (want && list.some((t) => normalizeLanguage(t?.language) === want)) return want;
   const playing = list.find((t) => t?.default) ?? list[0];
   return normalizeLanguage(playing?.language);
 }

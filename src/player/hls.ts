@@ -18,6 +18,7 @@ import { PgsRenderer } from 'libpgs';
 // IIFE so it loads via `new Worker(url)` with no extra glue. Keeps libpgs's
 // worker out of the main bundle. Mirror of chino-web's import.
 import libpgsWorkerUrl from 'libpgs/dist/libpgs.worker.js?url';
+import { audioLabels } from '@/lib/audio';
 import type {
   ChinoPlayer,
   LoadOptions,
@@ -137,6 +138,9 @@ export class HlsEngine implements ChinoPlayer, SubtitleCapableEngine {
     });
     hls.attachMedia(v);
     hls.on(Hls.Events.MEDIA_ATTACHED, () => hls.loadSource(url));
+    // The audio renditions of the level's group are known (and again when a
+    // level of another group comes in): the screen puts the one wanted on.
+    hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, () => this.emit('tracks'));
 
     // Circuit-breaker error handling, mirrored from chino-web. Without it a
     // chronic codec / MSE-append error sends recoverMediaError into a hot
@@ -255,9 +259,14 @@ export class HlsEngine implements ChinoPlayer, SubtitleCapableEngine {
   audioTracks(): PlayerAudioTrack[] {
     const hls = this.hls;
     if (!hls || !hls.audioTracks?.length) return [];
+    const labels = audioLabels(
+      hls.audioTracks.map((t) => ({ lang: t.lang, name: t.name, channels: Number(t.channels) || undefined })),
+    );
     return hls.audioTracks.map((t, i) => ({
       id: String(t.id ?? i),
-      label: t.name || t.lang || `Track ${i + 1}`,
+      label: labels[i],
+      lang: t.lang || undefined,
+      selected: i === hls.audioTrack,
     }));
   }
 

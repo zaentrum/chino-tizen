@@ -14,6 +14,10 @@
 export interface PlayerAudioTrack {
   id: string;
   label: string;
+  /** Its language tag as the stream gives it ("de", "ger"), if any. */
+  lang?: string;
+  /** The rendition playing (or picked, while the engine waits to switch). */
+  selected?: boolean;
 }
 
 /** Subtitle / text rendition exposed by the engine. */
@@ -33,6 +37,9 @@ export interface PlayerTextTrack {
  *   - error       unrecoverable engine error; payload carries a message
  *   - buffering   stalled, waiting for data (raises the buffer overlay)
  *   - firstframe  first decoded frame painted (initial spinner can clear)
+ *   - tracks      the audio tracks of the source loaded are known, or
+ *                 changed: audioTracks() lists them (fires again after every
+ *                 load(), so a quality switch can put the audio picked back)
  */
 export type PlayerEvent =
   | 'ready'
@@ -42,7 +49,8 @@ export type PlayerEvent =
   | 'ended'
   | 'error'
   | 'buffering'
-  | 'firstframe';
+  | 'firstframe'
+  | 'tracks';
 
 /** Optional load parameters. `startSec` seeks once the source is ready —
  *  used for auto-resume and the Zap `?resume=` channel-surf handoff. */
@@ -75,6 +83,8 @@ export interface ChinoPlayer {
    *  not this: the screen reloads the master with ?q= (@/lib/qualities). */
   setQuality(id: string): void;
   audioTracks(): PlayerAudioTrack[];
+  /** Switch to an audio track of audioTracks(). An engine that cannot
+   *  switch yet (AVPlay, before it plays) switches as soon as it can. */
   setAudioTrack(id: string): void;
   textTracks(): PlayerTextTrack[];
   /** Select a subtitle track, or pass null to turn subtitles off. */

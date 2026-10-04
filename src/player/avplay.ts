@@ -17,6 +17,7 @@
 //   PLAYING ⇄ pause()/PAUSED, stop()/IDLE. seekTo(ms) works in READY/PLAYING/
 //   PAUSED. close() returns to NONE and frees the decoder.
 
+import { audioLabels } from '@/lib/audio';
 import { needsUhdDecoder } from './caps';
 import type {
   ChinoPlayer,
@@ -63,6 +64,7 @@ interface AVPlayApi {
   setDisplayRect(x: number, y: number, w: number, h: number): void;
   setListener(l: AVPlayListener): void;
   getTotalTrackInfo(): AVPlayTrackInfo[];
+  getCurrentStreamInfo?(): AVPlayTrackInfo[];
   setSelectTrack(type: string, index: number): void;
   setStreamingProperty?(type: string, value: string): void;
   setExternalSubtitlePath?(path: string): void;
@@ -74,6 +76,23 @@ function avplayApi(): AVPlayApi | null {
   return api ?? null;
 }
 
+/** What a track's extra_info (a JSON string) says of it; nothing when it is
+ *  absent or not JSON on this firmware. */
+function trackMeta(t: AVPlayTrackInfo): { lang?: string; name?: string; channels?: number } {
+  try {
+    const meta = t.extra_info ? (JSON.parse(t.extra_info) as Record<string, unknown>) : {};
+    const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+    const channels = Number(meta.channels);
+    return {
+      lang: str(meta.language) ?? str(meta.lang) ?? str(meta.track_lang),
+      name: str(meta.track_name) ?? str(meta.name),
+      channels: Number.isFinite(channels) && channels > 0 ? channels : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
 export class AvplayEngine implements ChinoPlayer {
   private api: AVPlayApi | null = null;
   private objectEl: HTMLObjectElement | null = null;
@@ -83,9 +102,19 @@ export class AvplayEngine implements ChinoPlayer {
   private firstFrameFired = false;
   private durationMs = 0;
   private currentMs = 0;
-  // Cached track info, refreshed on prepare-complete. Audio/text selection
-  // maps our string ids back to AVPlay track indices.
+  // Cached track info, read on prepare-complete and again at the first frame
+  // (see firstFrame). Audio/text selection maps our string ids back to
+  // AVPlay track indices.
   private tracks: AVPlayTrackInfo[] = [];
+  // An audio track asked for before AVPlay could switch to it. AVPlay switches
+  // an HLS stream's audio while PLAYING only (setSelectTrack: READY is for
+  // Smooth Streaming, PAUSED for TEXT tracks), so a pick made sooner — the
+  // preferred language at the first frame, a pick while paused — waits here
+  // and goes in at the next playtime tick.
+  private pendingAudio: number | null = null;
+  // The audio track last asked for in this load: what the menu checks, since
+  // getCurrentStreamInfo need not say so at once.
+  private chosenAudio: number | null = null;
 
   attach(el: HTMLElement): void {
     this.container = el;
@@ -110,6 +139,10 @@ export class AvplayEngine implements ChinoPlayer {
     this.firstFrameFired = false;
     this.durationMs = 0;
     this.currentMs = 0;
+    // A new source has its own tracks; the screen asks again on 'tracks'.
+    this.tracks = [];
+    this.pendingAudio = null;
+    this.chosenAudio = null;
     this.emit('buffering');
 
     // A fresh load reuses the singleton — stop + close any prior session so
@@ -257,16 +290,27 @@ export class AvplayEngine implements ChinoPlayer {
     void _id;
   }
 
+  // AVPlay's AUDIO extra_info: {"language","channels","sample_rate",
+  // "bit_rate","fourCC"} — the language as the master's LANGUAGE gives it.
   audioTracks(): PlayerAudioTrack[] {
-    return this.tracks
-      .filter((t) => t.type === 'AUDIO')
-      .map((t) => ({ id: String(t.index), label: this.trackLabel(t) }));
+    const audio = this.tracks.filter((t) => t.type === 'AUDIO');
+    const meta = audio.map((t) => trackMeta(t));
+    const labels = audioLabels(meta);
+    const playing = this.chosenAudio ?? this.currentAudioIndex();
+    return audio.map((t, i) => ({
+      id: String(t.index),
+      label: labels[i],
+      lang: meta[i].lang,
+      selected: t.index === playing,
+    }));
   }
 
   setAudioTrack(id: string): void {
     const idx = Number(id);
     if (!Number.isInteger(idx)) return;
-    try { this.api?.setSelectTrack('AUDIO', idx); } catch { /* ignore */ }
+    this.pendingAudio = idx;
+    this.chosenAudio = idx;
+    this.applyPendingAudio();
   }
 
   // AVPlay's own TEXT tracks are the ones inside the stream; AVPlay draws
@@ -319,6 +363,8 @@ export class AvplayEngine implements ChinoPlayer {
     this.objectEl = null;
     this.api = null;
     this.container = null;
+    this.pendingAudio = null;
+    this.chosenAudio = null;
     this.listeners.clear();
   }
 
@@ -354,20 +400,19 @@ export class AvplayEngine implements ChinoPlayer {
       onbufferingprogress: () => { /* progress %, no overlay update needed */ },
       onbufferingcomplete: () => {
         this.emit('playing');
-        if (!this.firstFrameFired) {
-          this.firstFrameFired = true;
-          this.emit('firstframe');
-        }
+        if (!this.firstFrameFired) this.firstFrame();
+        this.applyPendingAudio();
       },
       oncurrentplaytime: (ms: number) => {
         this.currentMs = ms;
         // First real playtime tick also signals the first painted frame on
         // firmwares that don't fire onbufferingcomplete promptly.
         if (!this.firstFrameFired && ms >= 0) {
-          this.firstFrameFired = true;
           this.emit('playing');
-          this.emit('firstframe');
+          this.firstFrame();
         }
+        // Ticks come while PLAYING: a waiting audio pick goes in now.
+        this.applyPendingAudio();
         this.emit('timeupdate', ms / 1000);
       },
       onstreamcompleted: () => this.emit('ended'),
@@ -379,6 +424,41 @@ export class AvplayEngine implements ChinoPlayer {
       },
     };
     try { api.setListener(listener); } catch { /* ignore */ }
+  }
+
+  // The first frame of a load. getTotalTrackInfo is documented in READY only
+  // after a synchronous prepare() — this engine prepares asynchronously, so
+  // the read on prepare-complete may come back empty — and in PLAYING always:
+  // the tracks are read again here, and the screen told ('tracks').
+  private firstFrame(): void {
+    this.firstFrameFired = true;
+    this.emit('firstframe');
+    this.tracks = this.safeTrackInfo();
+    this.emit('tracks');
+  }
+
+  // Switch to the audio track waiting, once AVPlay plays (see pendingAudio).
+  // A state that cannot be read does not hold the switch back.
+  private applyPendingAudio(): void {
+    const api = this.api;
+    const idx = this.pendingAudio;
+    if (!api || idx == null) return;
+    let state = '';
+    try { state = api.getState(); } catch { /* unknown — try the switch */ }
+    if (state && state !== 'PLAYING') return;
+    this.pendingAudio = null;
+    try { api.setSelectTrack('AUDIO', idx); } catch { /* not on this firmware */ }
+  }
+
+  // The AUDIO track playing, by AVPlay's index; null when it cannot say.
+  private currentAudioIndex(): number | null {
+    try {
+      const info = this.api?.getCurrentStreamInfo?.();
+      const audio = Array.isArray(info) ? info.find((s) => s.type === 'AUDIO') : undefined;
+      return audio && Number.isInteger(audio.index) ? audio.index : null;
+    } catch {
+      return null;
+    }
   }
 
   private safeTrackInfo(): AVPlayTrackInfo[] {
