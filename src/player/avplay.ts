@@ -17,6 +17,7 @@
 //   PLAYING ⇄ pause()/PAUSED, stop()/IDLE. seekTo(ms) works in READY/PLAYING/
 //   PAUSED. close() returns to NONE and frees the decoder.
 
+import { needsUhdDecoder } from './caps';
 import type {
   ChinoPlayer,
   LoadOptions,
@@ -146,6 +147,18 @@ export class AvplayEngine implements ChinoPlayer {
     // So Auto is AVPlay's own adaptation over the served ladder, and a pick
     // (q=<rung>) a master of that rung alone. Needs a device check: a 4K/8K
     // rung on a capable panel should play at its full rate.
+    //
+    // SET_MODE_4K is the one property Samsung's docs do ask for: before Tizen
+    // 5.0, 4K UHD streaming — and an adaptive stream switching up to a 4K
+    // rung — needs the UHD decoder forced (streaming Q&A). On a UHD panel
+    // of a 2018 set the ladder can hold 2160 rungs (?caps= lets them in),
+    // so it is set there; from Tizen 5.0 it is deprecated for retail TVs and
+    // not set. Like every streaming property it is set in IDLE, after open().
+    if (needsUhdDecoder()) {
+      try {
+        api.setStreamingProperty?.('SET_MODE_4K', 'TRUE');
+      } catch { /* firmware without the property — AVPlay picks the decoder */ }
+    }
 
     this.installListener(startSec);
     this.syncDisplayRect();

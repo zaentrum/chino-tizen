@@ -8,7 +8,13 @@
 // already sees productinfo.
 
 import { isTizen } from '@/tv/tizen';
-import { deviceCaps, type ProductInfo } from '@/lib/caps';
+import {
+  deviceCaps,
+  needsUhdDecoderMode,
+  panelHeight,
+  tizenVersion,
+  type ProductInfo,
+} from '@/lib/caps';
 
 let caps: string | null = null;
 
@@ -27,4 +33,11 @@ export function detectCaps(): string {
     });
   }
   return caps;
+}
+
+/** Whether AVPlay needs SET_MODE_4K=TRUE here: a UHD panel before Tizen 5.0
+ *  (see @/lib/caps needsUhdDecoderMode). */
+export function needsUhdDecoder(): boolean {
+  if (!isTizen()) return false;
+  return needsUhdDecoderMode(tizenVersion(navigator.userAgent), panelHeight(productinfo()));
 }

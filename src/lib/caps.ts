@@ -105,6 +105,27 @@ export function panelHeight(productinfo: ProductInfo | null | undefined): number
   }
 }
 
+/** The Tizen version a Samsung TV's user agent names ("… Tizen 4.0) …" →
+ *  4, "Tizen 2.4.0" → 2.4); null for any other user agent. */
+export function tizenVersion(userAgent: string | null | undefined): number | null {
+  const m = /\bTizen (\d+)(?:\.(\d+))?/i.exec(userAgent ?? '');
+  return m ? Number(`${m[1]}.${m[2] ?? '0'}`) : null;
+}
+
+/**
+ * Whether AVPlay must be told SET_MODE_4K=TRUE before it prepares. Samsung's
+ * streaming Q&A: "To enable streaming 4K UHD video, use the
+ * setStreamingProperty() method to set the SET_MODE_4K property to TRUE",
+ * and, for adaptive streaming that can change the resolution, it must be
+ * TRUE "when the stream switches to 4K UHD resolution". The property is
+ * deprecated for retail TVs from Tizen 5.0, where the manifest's own
+ * resolutions do that job. So: a UHD panel (where the caps let 2160 rungs
+ * in) on a TV before Tizen 5.0 — the 2018 sets this client starts at.
+ */
+export function needsUhdDecoderMode(version: number | null, panel: number | null): boolean {
+  return version != null && version < 5 && panel != null && panel > 1080;
+}
+
 /** How a type is asked about, or null when nothing can be asked. */
 function decoderCheck(env: CapsEnv): ((mime: string) => boolean) | null {
   const mse = env.mediaSource;

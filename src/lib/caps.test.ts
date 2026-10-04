@@ -3,7 +3,15 @@
 // from the app's tsc program.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { AUDIO_PROBES, VIDEO_PROBES, deviceCaps, panelHeight, type CapsEnv } from './caps.ts';
+import {
+  AUDIO_PROBES,
+  VIDEO_PROBES,
+  deviceCaps,
+  needsUhdDecoderMode,
+  panelHeight,
+  tizenVersion,
+  type CapsEnv,
+} from './caps.ts';
 
 const mime = (token: string): string =>
   [...VIDEO_PROBES, ...AUDIO_PROBES].find((p) => p.token === token)!.mime;
@@ -104,4 +112,26 @@ test('the panel height productinfo reports', () => {
   assert.equal(panelHeight({}), null);
   assert.equal(panelHeight(null), null);
   assert.equal(panelHeight(undefined), null);
+});
+
+test("the Tizen version a TV's user agent names", () => {
+  // Samsung's user agents per year (Retrieving Platform Information).
+  assert.equal(tizenVersion('Mozilla/5.0 (SMART-TV; LINUX; Tizen 4.0) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 TV Safari/537.36'), 4);
+  assert.equal(tizenVersion('Mozilla/5.0 (SMART-TV; LINUX; Tizen 5.5) AppleWebKit/537.36 (KHTML, like Gecko) 69.0.3497.106.1/5.5 TV Safari/537.36'), 5.5);
+  assert.equal(tizenVersion('Mozilla/5.0 (SMART-TV; Linux; Tizen 2.4.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/2.4.0 TV Safari/538.1'), 2.4);
+  assert.equal(tizenVersion('Mozilla/5.0 (SMART-TV; LINUX; Tizen 10.0) AppleWebKit/537.36 (KHTML, like Gecko) 130.0.6723.116/10.0 TV Safari/537.36'), 10);
+  assert.equal(tizenVersion('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/141.0 Safari/537.36'), null);
+  assert.equal(tizenVersion(undefined), null);
+});
+
+test('SET_MODE_4K: a UHD panel before Tizen 5.0 only', () => {
+  assert.equal(needsUhdDecoderMode(4, 2160), true);
+  assert.equal(needsUhdDecoderMode(4, 4320), true);
+  // An FHD panel is never sent a 2160 rung; an unread panel is taken for 1080.
+  assert.equal(needsUhdDecoderMode(4, 1080), false);
+  assert.equal(needsUhdDecoderMode(4, null), false);
+  // Deprecated from Tizen 5.0: the manifest's resolutions do its job there.
+  assert.equal(needsUhdDecoderMode(5, 2160), false);
+  assert.equal(needsUhdDecoderMode(6.5, 4320), false);
+  assert.equal(needsUhdDecoderMode(null, 2160), false);
 });
