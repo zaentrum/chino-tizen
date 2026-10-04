@@ -37,9 +37,10 @@ export interface PlayerTextTrack {
  *   - error       unrecoverable engine error; payload carries a message
  *   - buffering   stalled, waiting for data (raises the buffer overlay)
  *   - firstframe  first decoded frame painted (initial spinner can clear)
- *   - tracks      the audio tracks of the source loaded are known, or
- *                 changed: audioTracks() lists them (fires again after every
- *                 load(), so a quality switch can put the audio picked back)
+ *   - tracks      the audio tracks of the source loaded are known, changed,
+ *                 or another one plays: audioTracks() lists them (fires again
+ *                 after every load(), so a quality switch can put the audio
+ *                 picked back)
  */
 export type PlayerEvent =
   | 'ready'

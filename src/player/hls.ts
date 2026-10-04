@@ -140,7 +140,10 @@ export class HlsEngine implements ChinoPlayer, SubtitleCapableEngine {
     hls.on(Hls.Events.MEDIA_ATTACHED, () => hls.loadSource(url));
     // The audio renditions of the level's group are known (and again when a
     // level of another group comes in): the screen puts the one wanted on.
+    // hls.js lists them before it picks its default, so the switch to that
+    // one — or to the one wanted — is told too, for the menu's check mark.
     hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, () => this.emit('tracks'));
+    hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, () => this.emit('tracks'));
 
     // Circuit-breaker error handling, mirrored from chino-web. Without it a
     // chronic codec / MSE-append error sends recoverMediaError into a hot
