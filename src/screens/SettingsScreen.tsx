@@ -13,7 +13,8 @@
 //     player treats "no preference" and "off/original" the same way the web
 //     and androidtv clients do.
 //   - Account: the active account name, Switch account (opens an in-screen
-//     account-picker overlay), and Sign out.
+//     account-picker overlay), Sign out, and Delete Account (a screen of its
+//     own, DeleteAccountScreen, that asks first).
 //   - Server: the connected host + Change server (clears the saved server +
 //     all accounts, then drops back to onboarding).
 //   - Feedback: "Report a problem" → a canned-category picker overlay that
@@ -25,7 +26,7 @@
 // the focused row on screen as the user walks down it.
 
 import { useEffect, useState } from 'react';
-import { LogOut, Users, Server, Plus, Minus, MessageSquareWarning } from 'lucide-react';
+import { LogOut, Users, Server, Plus, Minus, MessageSquareWarning, Trash2 } from 'lucide-react';
 import { SideRail } from '@/components/SideRail';
 import { TopBar } from '@/components/TopBar';
 import { useFocusable, useRemoteKey } from '@/tv/focus';
@@ -159,7 +160,7 @@ export default function SettingsScreen(): JSX.Element {
 
             <Section
               title="Account"
-              subtitle="Sign in as a different user on this TV, or sign out of the current one."
+              subtitle="Sign in as a different user on this TV, sign out of the current one, or delete your account."
             >
               <RowShell>
                 <div className="flex flex-1 flex-col">
@@ -179,6 +180,13 @@ export default function SettingsScreen(): JSX.Element {
                     icon={<LogOut className="h-5 w-5" />}
                     onEnter={signOut}
                   />
+                  {account ? (
+                    <ActionButton
+                      label="Delete Account"
+                      icon={<Trash2 className="h-5 w-5" />}
+                      onEnter={() => navigate('/settings/delete-account')}
+                    />
+                  ) : null}
                 </div>
               </RowShell>
             </Section>

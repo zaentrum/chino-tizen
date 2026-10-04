@@ -13,6 +13,7 @@
 //   /person/:id      person / filmography
 //   /watchlist       lists-aware watchlist surface
 //   /settings        settings rows
+//   /settings/delete-account  Delete Account (asks, then deletes)
 //   /zap             full-screen channel-surf
 //   /player/:id      full-screen player
 import { useEffect, useState } from 'react';
@@ -29,6 +30,7 @@ export interface RouteMatch {
     | 'person'
     | 'watchlist'
     | 'settings'
+    | 'deleteAccount'
     | 'zap'
     | 'player';
   params: Record<string, string>;
@@ -45,6 +47,7 @@ const ROUTES: { name: RouteMatch['name']; re: RegExp; keys: string[] }[] = [
   { name: 'search', re: /^\/search\/?$/, keys: [] },
   { name: 'watchlist', re: /^\/watchlist\/?$/, keys: [] },
   { name: 'settings', re: /^\/settings\/?$/, keys: [] },
+  { name: 'deleteAccount', re: /^\/settings\/delete-account\/?$/, keys: [] },
   { name: 'zap', re: /^\/zap\/?$/, keys: [] },
 ];
 
@@ -81,6 +84,14 @@ export function navigate(path: string): void {
   if (full === window.location.pathname + window.location.search) return;
   window.history.pushState({}, '', full);
   // pushState does not emit popstate; fire our own event so useRoute() updates.
+  window.dispatchEvent(new PopStateEvent('popstate'));
+}
+
+/** Like [navigate], but in place of the current history entry: BACK cannot
+ *  return to the screen left (Delete Account, once the account is gone). */
+export function replace(path: string): void {
+  const full = path.startsWith('/') ? path : `/${path}`;
+  window.history.replaceState({}, '', full);
   window.dispatchEvent(new PopStateEvent('popstate'));
 }
 
