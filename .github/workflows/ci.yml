@@ -22,6 +22,65 @@ jobs:
                   --exclude-dir=.git --exclude-dir=.github
                   --exclude=package-lock.json --exclude=LICENSE)
 
+          # A name counts where what stands on either side of it is not a
+          # letter or a digit. \b would not do: it counts "_" as part of a
+          # word, so SONARR_API_KEY went through \bsonarr\b unseen. A letter
+          # or a digit on either side still keeps a name out of longer words:
+          # the product names are not in "complex" or "multiplex". (A name run
+          # into camelCase, sonarrUrl, is not caught either; the guard trades
+          # that for no false positives, as the operator repo's
+          # scripts/check-neutrality.sh does.) Plain POSIX classes, which GNU
+          # grep here and BSD grep on a Mac read alike.
+          word() { printf '(^|[^[:alnum:]])(%s)([^[:alnum:]]|$)' "$1"; }
+
+          host_re='nalet\.cloud'
+          # Other media products, put together from pieces so that this file
+          # does not name them either.
+          p1='jelly''fin' p2='pl''ex' p3='em''by' p4='ko''di' p5='nalet''flix'
+          product_re=$(word "$p1|$p2|$p3|$p4|$p5")
+          vocab_re="$(word 'indexer|usenet|torrent|sonarr|radarr|prowlarr|lidarr|bazarr|jackett')"'|\*arr([^[:alnum:]]|$)'
+
+          # The patterns first, against lines they must and must not flag: a
+          # pattern that has gone blind fails the job before it passes a scan.
+          bad=0
+          expect() { # expect <label> <pattern> <hit|miss> <line>
+            local got=miss
+            if printf '%s\n' "$4" | grep -qiE -- "$2"; then got=hit; fi
+            if [ "$got" != "$3" ]; then
+              echo "::error::neutrality self-test: the $1 pattern should $([ "$3" = hit ] && echo flag || echo pass) this line: $4"
+              bad=1
+            fi
+          }
+          upper=$(printf '%s' "$p2" | tr '[:lower:]' '[:upper:]')
+          # Joined by "_": the names \b let through.
+          expect vocab "$vocab_re" hit 'SONARR_API_KEY=x'
+          expect vocab "$vocab_re" hit 'TORRENT_DIR=/data'
+          expect vocab "$vocab_re" hit 'indexer_url: http://x'
+          expect vocab "$vocab_re" hit 'the *arr_stack'
+          expect product "$product_re" hit "${upper}_TOKEN"
+          expect product "$product_re" hit "${p5}_url"
+          # The forms \b caught, still caught.
+          expect vocab "$vocab_re" hit 'image: ghcr.io/example/radarr:latest'
+          expect vocab "$vocab_re" hit 'Prowlarr'
+          expect vocab "$vocab_re" hit 'the *arr apps'
+          expect product "$product_re" hit "url: http://${p1}:8096"
+          expect product "$product_re" hit "the ${p3} client"
+          expect host "$host_re" hit "db.nalet"".cloud"
+          # Longer words are other words.
+          expect vocab "$vocab_re" miss 'torrential'
+          expect vocab "$vocab_re" miss 'reindexers'
+          expect product "$product_re" miss 'complex'
+          expect product "$product_re" miss 'multiplex'
+          expect product "$product_re" miss 'COMPLEX_QUERY=1'
+          expect product "$product_re" miss 'perplexed'
+          expect product "$product_re" miss 'kodiak'
+          expect host "$host_re" miss 'media.example.org'
+          if [ "$bad" -ne 0 ]; then
+            echo "Neutrality guard: its own patterns are wrong; fix them before trusting a scan."
+            exit 2
+          fi
+          echo "Neutrality self-test passed."
+
           scan() {
             local label="$1" pattern="$2"
             echo "== $label =="
@@ -32,11 +91,11 @@ jobs:
           }
 
           # Internal hostnames (any *.nalet.cloud, gitlab/kb/registry/sso/identity).
-          scan "internal hostnames" 'nalet\.cloud'
+          scan "internal hostnames" "$host_re"
           # Competitor product names (case-insensitive).
-          scan "competitor names" 'jellyfin|plex|emby|kodi|naletflix'
+          scan "competitor names" "$product_re"
           # Acquisition vocabulary in user-facing text / code.
-          scan "acquisition vocab" '\b(indexer|usenet|torrent)\b|\*arr\b|\b(sonarr|radarr|prowlarr|lidarr|bazarr|jackett)\b'
+          scan "acquisition vocab" "$vocab_re"
 
           if [ "$fail" -ne 0 ]; then
             echo "Neutrality scan failed — see violations above."
