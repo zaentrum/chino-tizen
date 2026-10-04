@@ -16,8 +16,7 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"],
-      "@web/*": ["vendor/chino-web/src/*"]
+      "@/*": ["src/*"]
     }
   },
   "include": ["src"],

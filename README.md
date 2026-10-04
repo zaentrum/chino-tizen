@@ -8,10 +8,10 @@ own zaentrum server (the Add-Server flow), and it discovers everything else —
 the API base from `GET /api/config` and the sign-in endpoints via OIDC
 discovery against your issuer. No server address is baked into the build.
 
-It reuses **chino-web** (vendored as a git submodule at `vendor/chino-web`,
-aliased `@web`) for UI and streaming logic, and adds the Tizen-specific layer:
-a native **AVPlay** player (with an hls.js fallback), a D-pad **spatial focus**
-engine, **device-flow** auth, and `.wgt` packaging.
+It follows **chino-web**, the reference client, for UI and streaming logic
+(ported, not shared code), and adds the Tizen-specific layer: a native
+**AVPlay** player (with an hls.js fallback), a D-pad **spatial focus** engine,
+**device-flow** auth, and `.wgt` packaging.
 
 ## Connecting to a server
 

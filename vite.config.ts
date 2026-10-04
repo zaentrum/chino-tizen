@@ -11,8 +11,6 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': resolve(import.meta.dirname, 'src'),
-      // chino-web is vendored as a git submodule and reused from here.
-      '@web': resolve(import.meta.dirname, 'vendor/chino-web/src'),
     },
   },
   build: {
