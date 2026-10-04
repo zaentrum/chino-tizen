@@ -40,6 +40,16 @@ jobs:
           product_re=$(word "$p1|$p2|$p3|$p4|$p5")
           vocab_re="$(word 'indexer|usenet|torrent|sonarr|radarr|prowlarr|lidarr|bazarr|jackett')"'|\*arr([^[:alnum:]]|$)'
 
+          # The self-test below blames the patterns when a line comes out
+          # wrong; a missing tool would read the same way, so it is named
+          # first. Failing closed either way.
+          for tool in grep tr; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "::error::neutrality guard: needs $tool on PATH"
+              exit 2
+            fi
+          done
+
           # The patterns first, against lines they must and must not flag: a
           # pattern that has gone blind fails the job before it passes a scan.
           bad=0
