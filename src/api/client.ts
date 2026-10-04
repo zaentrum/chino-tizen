@@ -382,9 +382,11 @@ export class ChinoClient {
   // ---------------------------------------------------------------------------
 
   /**
-   * GET /v1/items/{id}/play/info?caps= — the server's transcode decision +
-   * quality ladder. The wire ladder is [{ name, label }] (no height); we
-   * normalise to { id, label }. `qualities` is null on packaged items.
+   * GET /v1/items/{id}/play/info?caps= — the server's decision for these
+   * caps + the qualities a pick may ask for: a packaged ladder's Auto and
+   * rungs (null with fewer than two), else the transcode ladder. The wire
+   * entries are { name, label } (a packaged rung adds id, width, height,
+   * codec, bitrate); we keep { id: name, label }, what the menu and ?q= use.
    */
   async playInfo(id: string, caps: string): Promise<PlayInfo> {
     const qs = caps ? `?caps=${encodeURIComponent(caps)}` : '';
@@ -441,10 +443,11 @@ export class ChinoClient {
 
   /**
    * HLS master playlist URL for the player. Mirrors chino-web PlayerPage:
-   * `?stream=<token>&q=<quality>&caps=<caps>`. The server emits a single
-   * video variant matching `q`. The stream token (not the OIDC bearer) is
-   * used so the URL survives silent renews; the player rebuilds only on a
-   * quality switch.
+   * `?stream=<token>&q=<quality>&caps=<caps>`. For a packaged title the
+   * server serves the ladder of rungs these caps decode (q=auto) or the one
+   * rung q names; on the fly, the transcode rung q names. The stream token
+   * (not the OIDC bearer) is used so the URL survives silent renews; the
+   * player rebuilds only on a quality switch.
    */
   masterUrl(id: string, o: { streamToken: string; quality?: string; caps?: string }): string {
     const params = new URLSearchParams({ stream: o.streamToken });

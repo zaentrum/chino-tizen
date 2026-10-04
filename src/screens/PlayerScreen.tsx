@@ -47,6 +47,7 @@ import {
   resumeStartSec,
   type ProgressGuard,
 } from '@/lib/progress';
+import { chosenQuality, qualityMenu } from '@/lib/qualities';
 import {
   buildSubtitleTracks,
   pickDefaultSubtitle,
@@ -232,7 +233,8 @@ export default function PlayerScreen(): JSX.Element {
   const capsRef = useRef('');
 
   // Quality currently requested (drives the master URL's ?q=). Seeded from the
-  // server's default rung once playInfo lands.
+  // server's default once playInfo lands: "auto" for a packaged title (its
+  // ladder), "high" on the fly.
   const [quality, setQuality] = useState<string>('');
   const qualityRef = useRef('');
   useEffect(() => {
@@ -649,9 +651,11 @@ export default function PlayerScreen(): JSX.Element {
     back();
   }, [item, itemId, settings.autoPlayNext, postProgressNow]);
 
-  /* ── Quality switch: re-load the master with the new ?q=, preserving the
-     current position (web rebuilds hls with the new single-variant URL; we do
-     the engine-level equivalent via load(..., { startSec })). ── */
+  /* ── Quality switch: re-load the master with the new ?q= at the position
+     played (chino-web rebuilds hls.js on the new URL; we do the engine-level
+     equivalent via load(..., { startSec })). On a packaged title a rung's
+     name serves that rung alone and "auto" the ladder, which the engine
+     adapts over by itself; on the fly the name is the transcode rung. ── */
   const changeQuality = useCallback((id: string) => {
     const p = playerRef.current;
     if (!p || id === qualityRef.current) return;
@@ -808,7 +812,10 @@ export default function PlayerScreen(): JSX.Element {
     item?.season_number != null && item?.episode_number != null
       ? `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')}`
       : null;
-  const qualities = playInfo?.qualities ?? [];
+  // A packaged title's Auto and rungs, or the on-the-fly ladder (@/lib/
+  // qualities); empty when there is nothing to choose.
+  const qualities = qualityMenu(playInfo);
+  const currentQuality = chosenQuality(qualities, quality);
   // The text track on screen, if one is: PGS is the engine's to draw.
   const activeSub = subtitles.find((s) => s.id === activeSubId) ?? null;
   const activeTextUrl =
@@ -967,7 +974,7 @@ export default function PlayerScreen(): JSX.Element {
             </ControlButton>
           ) : null}
 
-          {/* Quality menu — only when the ladder has more than one rung. */}
+          {/* Quality menu — only when there are two or more to choose from. */}
           {qualities.length > 1 ? (
             <ControlButton
               label="Quality"
@@ -1024,10 +1031,12 @@ export default function PlayerScreen(): JSX.Element {
           rows={qualities.map((q) => ({
             id: q.id,
             label: q.label,
-            selected: q.id === quality,
+            selected: q.id === currentQuality?.id,
           }))}
           onPick={(id) => {
-            changeQuality(id);
+            // The entry already playing reloads nothing (a packaged title
+            // asked with "high" is on Auto).
+            if (id !== currentQuality?.id) changeQuality(id);
             setOpenMenu(null);
             noteInteraction();
           }}

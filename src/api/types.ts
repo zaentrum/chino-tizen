@@ -166,13 +166,14 @@ export interface PlayInfoTrack {
   channels?: number;
 }
 
-/** Result of GET /items/{id}/play/info — the server's transcode decision
- *  plus the quality ladder it can serve. `qualities` is null on packaged
- *  items (the master playlist owns the renditions there). */
+/** Result of GET /items/{id}/play/info — the server's decision for this
+ *  client's caps plus the qualities it may pick (@/lib/qualities). */
 export interface PlayInfo {
   duration_ms: number;
-  /** The transcode ladder ({ name, label } on the wire); empty for packaged,
-   *  remux and passthrough streams. */
+  /** What a quality pick may ask for ({ name, label, … } on the wire, the
+   *  name as id): a packaged ladder's Auto and rungs, tallest first; the
+   *  on-the-fly ladder high / medium / low (transcode only). Empty when the
+   *  server sends none — a package of one rendition, remux, passthrough. */
   qualities: { id: string; label: string }[];
   default_quality?: string;
   mode?: string;

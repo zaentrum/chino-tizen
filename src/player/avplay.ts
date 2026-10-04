@@ -126,17 +126,26 @@ export class AvplayEngine implements ChinoPlayer {
       return;
     }
 
-    // No ADAPTIVE_INFO bitrate range. One used to be set here
-    // (BITRATES=2000~10000): read as kbps, as Samsung's examples suggest (the
-    // docs name no unit and say nothing of variants outside the range), it
-    // capped playback at 10 Mbps, while a packaged 4K/8K variant peaks at
-    // 12.6–14.6 Mbps. Our masters carry one video variant (the package's, or
-    // the transcode rung ?q= asked for), so a range cannot pick a lower rung —
-    // it can only starve or refuse the one there is. Without it AVPlay plays
-    // what the master advertises; the server already serves a stream this TV
-    // decodes (?caps= heights: a package taller than the panel's decoder falls
-    // back to a transcode). Needs a device check: a 4K/8K package on a capable
-    // panel should play at its full rate.
+    // No ADAPTIVE_INFO — re-checked now that a packaged master is a ladder
+    // (q=auto), not one variant. Samsung's AVPlay reference and adaptive
+    // streaming guide describe it as optional steering of AVPlay's own
+    // adaptation, which runs without it:
+    //   BITRATES      bounds the variants AVPlay may pick. The server already
+    //                 serves only the rungs this TV decodes (?caps=), so a
+    //                 range could only cut rungs it chose to serve; the old
+    //                 BITRATES=2000~10000 (kbps, as Samsung's examples read)
+    //                 starved the 12.6–14.6 Mbps 4K/8K rungs.
+    //   STARTBITRATE  where adaptation starts (LOWEST, HIGHEST, AVERAGE or a
+    //                 rate). The master's first variant is its top rung, the
+    //                 one the server warms; where AVPlay starts unasked is not
+    //                 documented, so HIGHEST waits for a device to show it
+    //                 is worth it.
+    //   FIXED_MAX_RESOLUTION (Tizen 5.0+)  per Samsung only for 4K/8K
+    //                 manifests that do not state their resolutions; every
+    //                 variant of ours carries RESOLUTION.
+    // So Auto is AVPlay's own adaptation over the served ladder, and a pick
+    // (q=<rung>) a master of that rung alone. Needs a device check: a 4K/8K
+    // rung on a capable panel should play at its full rate.
 
     this.installListener(startSec);
     this.syncDisplayRect();
@@ -228,9 +237,10 @@ export class AvplayEngine implements ChinoPlayer {
   }
 
   setQuality(_id: string): void {
-    // Single-variant ladder — a quality change is a master-URL reload the
-    // screen drives (re-calls load() with a new ?q=). AVPlay exposes no
-    // per-rung level selector for our manifests, so this is a no-op.
+    // A quality pick is a master-URL reload the screen drives (re-calls
+    // load() with a new ?q=). AVPlay has no variant selector (Samsung:
+    // "Switching the audio quality or video resolution during playback is
+    // not supported"), so this is a no-op; within a ladder it adapts alone.
     void _id;
   }
 

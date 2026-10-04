@@ -6,11 +6,11 @@
 // screen's own overlay, the same on both engines — a .srt sidecar cannot ride
 // a native <track>, and AVPlay has no renderer at all.
 //
-// Single-variant ladder: chino-stream's master.m3u8 emits ONE video variant
-// matching ?q=. Changing quality therefore means reloading a different master
-// URL — that's the screen's job (it rebuilds the URL and calls load() again);
-// setQuality() here only steers hls.js's own ABR level when the manifest
-// happens to carry multiple levels (it normally doesn't).
+// Quality: a packaged title's master (q=auto) carries the ladder of rungs the
+// caps decode, which hls.js's ABR steps through; a quality pick is a reload
+// of a different master URL (q=<rung>, that rung alone; on the fly, the
+// transcode rung) — the screen's job, it rebuilds the URL and calls load()
+// again. setQuality() here only steers hls.js's own level choice.
 
 import Hls from 'hls.js';
 import { PgsRenderer } from 'libpgs';
@@ -237,10 +237,9 @@ export class HlsEngine implements ChinoPlayer, SubtitleCapableEngine {
   }
 
   setQuality(id: string): void {
-    // Our master playlist is single-variant per ?q=, so a real quality
-    // change is a master-URL reload the screen drives. When the manifest
-    // DOES carry multiple levels (e.g. a packaged multi-rendition item),
-    // steer hls.js's level: 'auto'/'-1' → ABR, a numeric string → that level.
+    // A quality pick is a master-URL reload the screen drives (?q=). This
+    // steers hls.js's level within the master loaded: 'auto'/'-1' → ABR, a
+    // numeric string → that level.
     const hls = this.hls;
     if (!hls) return;
     if (id === 'auto' || id === '-1') {

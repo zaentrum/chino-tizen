@@ -70,8 +70,9 @@ export interface ChinoPlayer {
   currentTime(): number;
   /** Stream duration, in seconds (0 / NaN-safe before metadata). */
   duration(): number;
-  /** Switch the video quality rung ('high' | 'medium' | 'low' for our
-   *  server's single-variant ladder, or an ABR auto level on hls.js). */
+  /** Steer the engine's own level choice where it has one ('auto' / a level
+   *  index on hls.js; a no-op on AVPlay). A quality pick from the menu is
+   *  not this: the screen reloads the master with ?q= (@/lib/qualities). */
   setQuality(id: string): void;
   audioTracks(): PlayerAudioTrack[];
   setAudioTrack(id: string): void;
