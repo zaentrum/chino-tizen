@@ -95,9 +95,23 @@ const UNDETERMINED = new Set(['und', 'mul', 'zxx', 'mis', 'unk', 'unknown', 'non
  *  a film without dialogue. */
 export const NO_DIALOGUE = 'No dialogue';
 
+/** The tags for no one language that still say what a track is in, and what
+ *  such a track is called: no dialogue ("zxx"), several languages ("mul"), a
+ *  language ISO 639 has no code for ("mis"). */
+const NOT_ONE_LANGUAGE = new Map([
+  ['zxx', NO_DIALOGUE],
+  ['mul', 'Multiple languages'],
+  ['mis', 'Other language'],
+]);
+
+/** The tag's language subtag, lower-cased ("pt" of "PT_br"). */
+function primarySubtag(tag: string | null | undefined): string {
+  return (tag ?? '').trim().toLowerCase().split(/[-_]/)[0];
+}
+
 /** Is the tag "zxx": no linguistic content, no dialogue? */
 export function isNoDialogue(tag: string | null | undefined): boolean {
-  return (tag ?? '').trim().toLowerCase().split(/[-_]/)[0] === 'zxx';
+  return primarySubtag(tag) === 'zxx';
 }
 
 /**
@@ -134,12 +148,14 @@ export function knownLanguage(text: string | null | undefined): string {
 
 /**
  * A language's English name ("de", "ger", "deu" → "German"); "No dialogue"
- * for "zxx"; "" when the tag names no language. A tag outside the table gets
- * the platform's name for it where the runtime has Intl.DisplayNames (newer
- * TVs, desktop), else the tag.
+ * for "zxx", "Multiple languages" for "mul", "Other language" for "mis"; ""
+ * when the tag names no language. A tag outside the table gets the
+ * platform's name for it where the runtime has Intl.DisplayNames (newer TVs,
+ * desktop), else the tag.
  */
 export function languageName(tag: string | null | undefined): string {
-  if (isNoDialogue(tag)) return NO_DIALOGUE;
+  const notOne = NOT_ONE_LANGUAGE.get(primarySubtag(tag));
+  if (notOne) return notOne;
   const code = normalizeLanguage(tag);
   if (!code) return '';
   const known = BY_TAG.get(code);

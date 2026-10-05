@@ -88,6 +88,13 @@ test('menu labels: the language and its layout, the stream\'s name where there i
   );
 });
 
+test('mul: "Multiple languages", mis: "Other language"', () => {
+  assert.deepEqual(
+    audioLabels([{ lang: 'mul', name: 'mul' }, { lang: 'mis' }, { lang: 'mul', name: 'Original', channels: 2 }]),
+    ['Multiple languages', 'Other language', 'Multiple languages (Original)'],
+  );
+});
+
 test('zxx, no linguistic content: "No dialogue"', () => {
   assert.deepEqual(
     audioLabels([{ lang: 'zxx' }, { lang: 'ZXX', name: 'No dialogue', channels: 6 }, { lang: 'zxx', name: 'zxx', channels: 2 }]),

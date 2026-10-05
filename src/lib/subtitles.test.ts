@@ -79,6 +79,18 @@ test('a track without a language goes by its own name, else Unknown', () => {
   );
 });
 
+test('mul is "Multiple languages", mis "Other language" - and neither a language to follow', () => {
+  assert.equal(languageName('mul'), 'Multiple languages');
+  assert.equal(languageName('MUL'), 'Multiple languages');
+  assert.equal(languageName('mis'), 'Other language');
+  assert.equal(normalizeLanguage('mul'), '');
+  assert.equal(normalizeLanguage('mis'), '');
+  assert.deepEqual(
+    subtitleLabels([{ lang: 'mul' }, { lang: 'mis', title: 'Signs' }, { lang: 'mul', title: 'mul' }]),
+    ['Multiple languages', 'Other language (Signs)', 'Multiple languages 2'],
+  );
+});
+
 test('zxx, no linguistic content, is "No dialogue" - and still no language to follow', () => {
   for (const tag of ['zxx', 'ZXX', ' zxx ', 'zxx-Latn']) assert.equal(languageName(tag), 'No dialogue', tag);
   assert.equal(normalizeLanguage('zxx'), '');
