@@ -29,6 +29,20 @@ Sign-in uses the OAuth 2.0 Device Authorization Grant (RFC 8628). Register a
 public client for the TV in your OIDC issuer's clients (a device-flow-capable
 client whose id your server advertises in `GET /api/config`).
 
+## Addons
+
+Addons installed on your server reach the app through two generic seams, so
+the app never needs to know them:
+
+- **Buttons** under a search that finds nothing (the `search.empty` slot). A
+  button that runs an action sends it from the TV; one that opens a page
+  shows its address instead, to open on a phone or computer.
+- **Notices** — what an addon tells you. The bell in the top bar counts the
+  unread ones; open it to read them, open the title one is about, mark them
+  all read, or delete them. A TV shows a notice's text only, not its link.
+
+With no addons, or no portal on the server, neither shows anything.
+
 ## Develop (desktop browser)
 
 ```sh
