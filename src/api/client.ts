@@ -535,6 +535,20 @@ export class ChinoClient {
   }
 
   // ---------------------------------------------------------------------------
+  // Addons — UI extension slots
+  // ---------------------------------------------------------------------------
+
+  /**
+   * GET /v1/extensions?slot= — what addons contribute to a named slot, from
+   * portal-api's registry with the viewer's bearer forwarded. Always 200 with
+   * an array, empty when no addon contributes or portal-api does not answer.
+   * Returned as it came: @/lib/extensions checks every row before it shows.
+   */
+  async extensions(slot: string): Promise<unknown> {
+    return this.getJSON<unknown>(`/extensions?slot=${encodeURIComponent(slot)}`);
+  }
+
+  // ---------------------------------------------------------------------------
   // Feedback / bug reports
   // ---------------------------------------------------------------------------
 

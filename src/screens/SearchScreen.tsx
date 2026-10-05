@@ -12,6 +12,10 @@
 // people are best-effort (an older server without /people just leaves the row
 // empty rather than failing the whole search). The 250ms debounce matches the
 // reference VM so we don't hammer chino-api on every keystroke.
+//
+// A search that finds no titles and no people shows what addons put in the
+// search.empty slot (@/components/ExtensionSlot), with the query as {q}, as
+// chino-web does — and a search that failed shows none: nothing was looked up.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Search as SearchIcon } from 'lucide-react';
@@ -22,8 +26,9 @@ import TopBar from '@/components/TopBar';
 import FocusableCard from '@/components/FocusableCard';
 import Spinner from '@/components/Spinner';
 import KeyboardOverlay from '@/components/KeyboardOverlay';
+import { ExtensionSlot } from '@/components/ExtensionSlot';
 import { PersonAvatar } from '@/components/PersonAvatar';
-import { useFocusable, useRemoteKey } from '@/tv/focus';
+import { focusKey, useFocusable, useRemoteKey } from '@/tv/focus';
 import { TVKey } from '@/tv/keys';
 import { navigate, back } from '@/router';
 
@@ -35,11 +40,13 @@ const PAGE_SIZE = 60;
 const PEOPLE_LIMIT = 12;
 // Debounce window for live search — same as the reference VM / mobile screen.
 const DEBOUNCE_MS = 250;
+// The search field's focusKey: focus returns there when the keyboard closes.
+const SEARCH_FIELD_KEY = 'search-field';
 
 type SearchState =
   | { kind: 'empty' }
   | { kind: 'searching' }
-  | { kind: 'nomatches' }
+  | { kind: 'nomatches'; q: string }
   | { kind: 'error'; message: string }
   | { kind: 'results'; items: Item[]; people: Person[] };
 
@@ -60,10 +67,19 @@ export default function SearchScreen(): JSX.Element {
   // their placeholder if it never arrives.
   const [streamToken, setStreamToken] = useState<string | undefined>(undefined);
 
+  // The keyboard closes. With no results to land on (nothing found, nothing
+  // typed, a failed search) focus goes back to the field that opened it, so
+  // DOWN reaches what the screen offers — the no-match state's addon buttons.
+  // Results take it themselves (the first card or chip's autoFocus).
+  const closeKeyboard = (): void => {
+    setEditing(false);
+    if (state.kind !== 'results') focusKey(SEARCH_FIELD_KEY);
+  };
+
   // BACK: close the keyboard if it's open, otherwise pop the route.
   useRemoteKey(TVKey.BACK, () => {
     if (editing) {
-      setEditing(false);
+      closeKeyboard();
       return;
     }
     back();
@@ -111,7 +127,7 @@ export default function SearchScreen(): JSX.Element {
         if (run !== runRef.current) return; // a newer search superseded this one
         const items = [...movies, ...series];
         if (items.length === 0 && people.length === 0) {
-          setState({ kind: 'nomatches' });
+          setState({ kind: 'nomatches', q: trimmed });
         } else {
           setState({ kind: 'results', items, people });
         }
@@ -158,7 +174,9 @@ export default function SearchScreen(): JSX.Element {
             ) : null}
             {state.kind === 'searching' ? <Spinner label={`Searching for “${query}”…`} fullscreen={false} /> : null}
             {state.kind === 'nomatches' ? (
-              <SearchMessage headline={`No results for “${query}”`} />
+              <SearchMessage headline={`No results for “${query}”`}>
+                <ExtensionSlot slot="search.empty" vars={{ q: state.q }} />
+              </SearchMessage>
             ) : null}
             {state.kind === 'error' ? (
               <SearchMessage headline="Search failed" hint={state.message} isError />
@@ -177,8 +195,8 @@ export default function SearchScreen(): JSX.Element {
           // "Done" closes the keyboard; focus then settles on the first result
           // (autoFocus on the first card/chip), which is the "done typing →
           // browse" handoff the androidtv IME search action performs.
-          onSubmit={() => setEditing(false)}
-          onClose={() => setEditing(false)}
+          onSubmit={closeKeyboard}
+          onClose={closeKeyboard}
           title="Search"
           placeholder="Search movies, shows…"
         />
@@ -190,7 +208,11 @@ export default function SearchScreen(): JSX.Element {
 /** Read-only display of the live query; activating it opens the keyboard. The
  *  leading magnifier + placeholder mirror the top-bar / mobile / web search. */
 function SearchField({ value, onEnter }: { value: string; onEnter: () => void }): JSX.Element {
-  const { ref, focused } = useFocusable({ onEnter, autoFocus: value.trim() === '' });
+  const { ref, focused } = useFocusable({
+    onEnter,
+    autoFocus: value.trim() === '',
+    focusKey: SEARCH_FIELD_KEY,
+  });
   return (
     <button
       ref={ref}
@@ -319,20 +341,24 @@ function creditLabel(credits: number): string {
   return credits === 1 ? '1 title' : `${credits} titles`;
 }
 
-/** Centred headline + optional hint for empty / no-match / error states. */
+/** Centred headline + optional hint for empty / no-match / error states, and
+ *  what goes under them (the no-match state's addon slot). */
 function SearchMessage({
   headline,
   hint,
   isError,
+  children,
 }: {
   headline: string;
   hint?: string;
   isError?: boolean;
+  children?: React.ReactNode;
 }): JSX.Element {
   return (
     <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 text-center">
       <p className={`text-2xl font-semibold ${isError ? 'text-red' : 'text-text'}`}>{headline}</p>
       {hint ? <p className="text-muted">{hint}</p> : null}
+      {children ? <div className="mt-4">{children}</div> : null}
     </div>
   );
 }
