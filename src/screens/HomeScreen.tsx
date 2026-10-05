@@ -2,7 +2,7 @@
 // ui/library/LibraryScreen (LibraryContent) and chino-web's HomeSection:
 //
 //   ┌──────┬───────────────────────────────────────────────┐
-//   │ Side │ TopBar (search · watchlist · account)          │
+//   │ Side │ TopBar (search · notices · account)            │
 //   │ Rail ├───────────────────────────────────────────────┤
 //   │      │ Hero banner (auto-rotating, pauses on focus)   │
 //   │      │ Continue Watching · Next Up                    │

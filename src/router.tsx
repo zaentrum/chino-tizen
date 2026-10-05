@@ -14,6 +14,7 @@
 //   /watchlist       lists-aware watchlist surface
 //   /settings        settings rows
 //   /settings/delete-account  Delete Account (asks, then deletes)
+//   /notices         what addons told the signed-in person
 //   /zap             full-screen channel-surf
 //   /player/:id      full-screen player
 import { useEffect, useState } from 'react';
@@ -31,6 +32,7 @@ export interface RouteMatch {
     | 'watchlist'
     | 'settings'
     | 'deleteAccount'
+    | 'notices'
     | 'zap'
     | 'player';
   params: Record<string, string>;
@@ -48,6 +50,7 @@ const ROUTES: { name: RouteMatch['name']; re: RegExp; keys: string[] }[] = [
   { name: 'watchlist', re: /^\/watchlist\/?$/, keys: [] },
   { name: 'settings', re: /^\/settings\/?$/, keys: [] },
   { name: 'deleteAccount', re: /^\/settings\/delete-account\/?$/, keys: [] },
+  { name: 'notices', re: /^\/notices\/?$/, keys: [] },
   { name: 'zap', re: /^\/zap\/?$/, keys: [] },
 ];
 

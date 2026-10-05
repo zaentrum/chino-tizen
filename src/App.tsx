@@ -28,6 +28,7 @@ import PersonScreen from './screens/PersonScreen';
 import WatchlistScreen from './screens/WatchlistScreen';
 import SettingsScreen, { useCrashDrain } from './screens/SettingsScreen';
 import DeleteAccountScreen from './screens/DeleteAccountScreen';
+import NoticesScreen from './screens/NoticesScreen';
 import ZapScreen from './screens/ZapScreen';
 import PlayerScreen from './screens/PlayerScreen';
 
@@ -55,6 +56,8 @@ function MainApp(): JSX.Element {
       return <SettingsScreen />;
     case 'deleteAccount':
       return <DeleteAccountScreen />;
+    case 'notices':
+      return <NoticesScreen />;
     case 'zap':
       return <ZapScreen />;
     case 'player':
