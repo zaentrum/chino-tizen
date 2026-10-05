@@ -53,12 +53,40 @@ export interface Subtitle {
   url?: string;
 }
 
-/** A trailer/extra reference (TMDB-sourced). chino-api always sends `url`. */
+/** A link to a trailer online (TMDB-sourced). chino-api always sends `url`:
+ *  a trailer this server plays is an ExtraRef in `extras`, never one of these. */
 export interface Trailer {
   site?: string;
   external_id?: string;
   url: string;
   title?: string;
+}
+
+/**
+ * One of a title's extras that plays from this server, as GET /items/{id}
+ * lists them in `extras` (absent when none plays; chino-api/internal/katalog/
+ * client.go Extra): a trailer, a teaser, a featurette, … packaged for
+ * streaming apart from the title, in the order a viewer sees them.
+ * `play_path` is its HLS master, origin-relative like a poster's
+ * ("/api/v1/items/{id}/extras/{extraId}/play/master.m3u8"; resolve it with
+ * api.assetUrl), asked for as a title's master is (?stream=, &caps=). An
+ * extra has no progress, watched state, segments, trickplay, /play/info or
+ * /prewarm.
+ */
+export interface ExtraRef {
+  id: string;
+  /** trailer, teaser, featurette, behind-the-scenes, making-of,
+   *  deleted-scene, interview, gag-reel, short or other. */
+  kind: string;
+  title: string;
+  /** BCP 47 ("en"), when known. */
+  language?: string;
+  duration_ms?: number;
+  /** Set on a series' extra of one season (0 the specials). */
+  season_number?: number;
+  /** Always true: an extra plays from this server. */
+  local: boolean;
+  play_path: string;
 }
 
 /** Per-item summary of analyzer-detected segments — drives whether the
@@ -73,7 +101,7 @@ export interface SegSummary {
 /**
  * A catalogue entry. Browse lists carry the lean fields (id/title/year/…);
  * GetItemDetail (`/items/{id}`) additionally populates the rich
- * associations (genres/cast/subtitles/trailers/segments).
+ * associations (genres/cast/subtitles/trailers/extras/segments).
  */
 export interface Item {
   id: string;
@@ -94,6 +122,7 @@ export interface Item {
   cast?: CastEntry[];
   subtitles?: Subtitle[];
   trailers?: Trailer[];
+  extras?: ExtraRef[];
   segments?: SegSummary;
 
   poster_url?: string;

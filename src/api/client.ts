@@ -146,8 +146,9 @@ export class ChinoClient {
 
   /**
    * GET /v1/items/{id} — single item with rich associations expanded. The
-   * server expands genres/cast/subtitles/trailers/segments unconditionally,
-   * so `include` is accepted for forward-compat but only sent when given.
+   * server expands genres/cast/subtitles/trailers/extras/segments
+   * unconditionally, so `include` is accepted for forward-compat but only
+   * sent when given.
    */
   async getItem(id: string, include?: string): Promise<Item> {
     const qs = include ? `?include=${encodeURIComponent(include)}` : '';
