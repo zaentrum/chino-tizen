@@ -15,6 +15,7 @@ import type {
   Watchlist,
 } from './types';
 import { apiUrl, withStreamToken } from '@/lib/artwork';
+import { noticeListOf, type NoticeList } from '@/lib/notices';
 import { acceptLanguage } from '@/lib/people';
 
 /**
@@ -546,6 +547,48 @@ export class ChinoClient {
    */
   async extensions(slot: string): Promise<unknown> {
     return this.getJSON<unknown>(`/extensions?slot=${encodeURIComponent(slot)}`);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Addons — notices
+  // ---------------------------------------------------------------------------
+
+  /**
+   * GET /v1/notices — what addons told the signed-in person, newest first,
+   * forwarded to portal-api with the bearer. Always 200: { notices, unread,
+   * available }, available false (the list empty) when chino-api had no
+   * portal-api to ask. A server older than notices answers 404: none to show
+   * either. Read by @/lib/notices; throws when no answer came.
+   */
+  async notices(): Promise<NoticeList> {
+    const r = await fetch(`${this.base()}/v1/notices`, { headers: this.authHeaders() });
+    if (r.status === 404) return noticeListOf(null);
+    if (!r.ok) throw new Error(`chino-api ${r.status}`);
+    return noticeListOf(await r.json());
+  }
+
+  /** POST /v1/notices/{noticeId}/read — read, once: reading it again keeps
+   *  when it was first read. */
+  async readNotice(id: string): Promise<void> {
+    await this.changeNotices(`/notices/${encodeURIComponent(id)}/read`, 'POST');
+  }
+
+  /** POST /v1/notices/read-all — every notice of the person, read. */
+  async readAllNotices(): Promise<void> {
+    await this.changeNotices('/notices/read-all', 'POST');
+  }
+
+  /** DELETE /v1/notices/{noticeId} — 204. */
+  async deleteNotice(id: string): Promise<void> {
+    await this.changeNotices(`/notices/${encodeURIComponent(id)}`, 'DELETE');
+  }
+
+  /** A change of the person's notices. Throws when it was not made: 404 for
+   *  a notice they do not have, 502 / 503 when portal-api did not make it
+   *  (the app reads the list again, which shows the notice as it is). */
+  private async changeNotices(path: string, method: 'POST' | 'DELETE'): Promise<void> {
+    const r = await fetch(`${this.base()}/v1${path}`, { method, headers: this.authHeaders() });
+    if (!r.ok) throw new Error(`chino-api ${r.status}`);
   }
 
   // ---------------------------------------------------------------------------

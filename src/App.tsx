@@ -13,6 +13,7 @@
 import { FocusProvider } from './tv/focus';
 import { AuthProvider, useAuth } from './auth/session';
 import { serverConfigStore } from './state/serverConfig';
+import { useNoticesPolling } from './state/notices';
 import { useRoute, matchRoute } from './router';
 import Spinner from './components/Spinner';
 
@@ -35,6 +36,10 @@ import PlayerScreen from './screens/PlayerScreen';
 function MainApp(): JSX.Element {
   const { path } = useRoute();
   const { name, params } = matchRoute(path);
+  // What addons told the signed-in person, kept current while they are
+  // signed in — this tree is mounted only then — for the top bar's bell.
+  const { account } = useAuth();
+  useNoticesPolling(account?.sub ?? null);
   switch (name) {
     case 'browse':
       return <BrowseScreen />;
