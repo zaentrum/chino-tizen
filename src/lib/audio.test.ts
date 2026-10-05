@@ -72,7 +72,7 @@ test('after a quality switch the pick is found again in the new list', () => {
   assert.equal(audioTrackFor(reloaded, picked), '5');
 });
 
-test('menu labels: the stream\'s name, else the language and its layout, else "Audio N"', () => {
+test('menu labels: the language and its layout, the stream\'s name where there is none, else "Unknown"', () => {
   assert.deepEqual(
     audioLabels([
       { lang: 'ger', channels: 2 },
@@ -81,8 +81,51 @@ test('menu labels: the stream\'s name, else the language and its layout, else "A
       { lang: 'und' },
       { lang: 'fre', channels: 8 },
       { lang: 'de' },
+      { lang: 'und', name: 'Director\'s Commentary' },
+      { name: 'Commentary 5.1', channels: 6 },
     ]),
-    ['German', 'German 5.1', 'Commentary', 'Audio 4', 'French 7.1', 'German 2'],
+    ['German', 'German 5.1', 'English', 'Unknown', 'French 7.1', 'German 2', 'Director\'s Commentary', 'Commentary 5.1'],
+  );
+});
+
+test('zxx, no linguistic content: "No dialogue"', () => {
+  assert.deepEqual(
+    audioLabels([{ lang: 'zxx' }, { lang: 'ZXX', name: 'No dialogue', channels: 6 }, { lang: 'zxx', name: 'zxx', channels: 2 }]),
+    ['No dialogue', 'No dialogue 5.1', 'No dialogue 2'],
+  );
+});
+
+test('an old playlist\'s free-text names: a format, a number or a code is no label', () => {
+  assert.deepEqual(
+    audioLabels([
+      { lang: 'eng', name: 'AC3 5.1 @ 640 Kbps', channels: 2 },
+      { lang: 'fre', name: 'DTS-HD Master Audio / 5.1 / 48 kHz / 2618 kbps / 24-bit' },
+      { lang: 'ger', name: 'Deutsch' },
+      { lang: 'und', name: 'Track 0' },
+      { lang: 'und', name: 'Dolby Digital 5.1' },
+      { lang: 'und', name: 'und' },
+    ]),
+    ['English', 'French', 'German', 'Unknown', 'Unknown 2', 'Unknown 3'],
+  );
+});
+
+test('two of one language: told apart by what their names say, else numbered', () => {
+  assert.deepEqual(
+    audioLabels([
+      { lang: 'en', name: 'English', channels: 2 },
+      { lang: 'en', name: 'Commentary', channels: 2 },
+      { lang: 'en', name: 'English (SDH)', channels: 2 },
+      { lang: 'en', name: 'English (2)', channels: 2 },
+      { lang: 'en', name: 'English 5.1', channels: 6 },
+      { lang: 'en', name: 'Commentary 5.1', channels: 6 },
+    ]),
+    ['English', 'English (Commentary)', 'English (SDH)', 'English 2', 'English 5.1', 'English 5.1 (Commentary)'],
+  );
+  // A tag there is no name for: the stream's name, else the tag. A tag that
+  // is a name the table knows is that language.
+  assert.deepEqual(
+    audioLabels([{ lang: 'qaa', name: 'Klingon' }, { lang: 'qaa' }, { lang: 'German', name: 'Commentary' }]),
+    ['Klingon', 'qaa', 'German'],
   );
 });
 

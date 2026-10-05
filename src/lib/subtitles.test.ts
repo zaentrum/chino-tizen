@@ -74,8 +74,17 @@ test('a forced track says so, once', () => {
 
 test('a track without a language goes by its own name, else Unknown', () => {
   assert.deepEqual(
-    subtitleLabels([{ title: 'Signs & Songs' }, {}, { lang: 'und', title: 'Subtitles' }, { forced: true }]),
-    ['Signs & Songs', 'Unknown', 'Unknown 2', 'Unknown (Forced)'],
+    subtitleLabels([{ title: 'Signs & Songs' }, {}, { lang: 'und', title: 'Subtitles' }, { forced: true }, { lang: 'und', title: 'und' }]),
+    ['Signs & Songs', 'Unknown', 'Unknown 2', 'Unknown (Forced)', 'Unknown 3'],
+  );
+});
+
+test('zxx, no linguistic content, is "No dialogue" - and still no language to follow', () => {
+  for (const tag of ['zxx', 'ZXX', ' zxx ', 'zxx-Latn']) assert.equal(languageName(tag), 'No dialogue', tag);
+  assert.equal(normalizeLanguage('zxx'), '');
+  assert.deepEqual(
+    subtitleLabels([{ lang: 'zxx' }, { lang: 'zxx', title: 'Signs' }, { lang: 'zxx', title: 'zxx' }]),
+    ['No dialogue', 'No dialogue (Signs)', 'No dialogue 2'],
   );
 });
 

@@ -7,7 +7,7 @@
 // by label, else by place, as chino-web's audioRenditionFor does. Pure:
 // audio.test.ts runs it under node --test.
 
-import { knownLanguage, languageName, normalizeLanguage } from './subtitles.ts';
+import { knownLanguage, languageName, normalizeLanguage, qualifierOf } from './subtitles.ts';
 
 /** An audio track as an engine lists it. */
 export interface AudioOption {
@@ -77,22 +77,65 @@ function layout(channels: number | undefined): string {
   return `${channels} ch`;
 }
 
+// A name that describes the source's audio format - a codec, a bitrate, a
+// sample rate or depth ("AC3 5.1 @ 640 Kbps", "DTS-HD MA 5.1") - and so
+// nothing of the track: the stream is AAC whatever the file had. chino-web's
+// lib/languages.ts.
+const FORMAT_WORDS =
+  /(^|[^a-z0-9])(dts(-hd)?|truehd|atmos|dolby|e?-?ac-?3|ddp?\+?|aac|flac|l?pcm|opus|mp3|vorbis|lossless|master audio|\d+ ?k?hz|\d* ?[km]bps|kb\/s|\d+[- ]?bit)(?![a-z0-9])/i;
+// A channel layout in a name, which goes: the label names the layout itself.
+const LAYOUT_WORDS = /(^|[^a-z0-9.])(mono|stereo|surround|[1-9]\.[0-2]|\d{1,2} ?ch(annels?)?)(?![a-z0-9.])/gi;
+// A name that only numbers the track ("Track 2", "Audio Track 1", "2").
+const NUMBERED = /^(audio|sound|track|stream|[\s#])*\d*$/i;
+
+/** What a track's name says beyond its language ("Commentary 5.1" on an
+ *  English track: "Commentary"); "" for nothing: a format, a number, the
+ *  language again ("English", "eng", "Deutsch" on German), a tag of none. */
+function nameOf(name: string | undefined, lang: string, language: string): string {
+  const raw = (name ?? '').trim();
+  if (!raw || FORMAT_WORDS.test(raw)) return '';
+  const t = qualifierOf(
+    raw
+      .replace(LAYOUT_WORDS, '$1')
+      .replace(/\(\s*\)|\[\s*\]/g, '')
+      .replace(/\s+/g, ' ')
+      .replace(/^[\s\-–—:·,|/]+|[\s\-–—:·,|/]+$/g, ''),
+    lang,
+    language,
+  );
+  return NUMBERED.test(t) ? '' : t;
+}
+
 /**
- * What the audio menu calls each track: its own name where the stream gives
- * one, else its language by name with the layout when it is more than
- * stereo ("German 5.1"), else "Audio N". Two that would read the same are
- * numbered ("German 2").
+ * What the audio menu calls each track: its language by name - "No
+ * dialogue" for zxx - with the layout when it is more than stereo ("German
+ * 5.1"); a track in no language what its name says, else "Unknown". The
+ * stream's name never stands in for the language: an old playlist's names
+ * are free text ("AC3 5.1 @ 640 Kbps", "Track 0"). Two that would read the
+ * same are told apart by what their names say ("English (Commentary)"),
+ * else numbered ("German 2").
  */
 export function audioLabels(
   tracks: readonly { lang?: string; name?: string; channels?: number }[],
 ): string[] {
+  const parts = tracks.map((t) => {
+    const lang = normalizeLanguage(t.lang);
+    let language = languageName(t.lang);
+    // A tag the table and the platform have no name for: the stream's name
+    // for the track before the tag.
+    const tag = (t.lang ?? '').trim();
+    const named = language !== '' && (language !== tag || knownLanguage(tag) !== '');
+    const own = nameOf(t.name, lang, named ? language : '');
+    if (!named) language = own || language || 'Unknown';
+    return { head: [language, layout(t.channels)].filter(Boolean).join(' '), own: named ? own : '' };
+  });
+  const count = new Map<string, number>();
+  for (const p of parts) count.set(p.head, (count.get(p.head) ?? 0) + 1);
   const seen = new Map<string, number>();
-  return tracks.map((t, i) => {
-    const own = (t.name ?? '').trim();
-    const language = languageName(t.lang);
-    const base = own || (language ? [language, layout(t.channels)].filter(Boolean).join(' ') : `Audio ${i + 1}`);
-    const n = (seen.get(base) ?? 0) + 1;
-    seen.set(base, n);
-    return n === 1 ? base : `${base} ${n}`;
+  return parts.map((p) => {
+    const label = (count.get(p.head) ?? 0) > 1 && p.own ? `${p.head} (${p.own})` : p.head;
+    const n = (seen.get(label) ?? 0) + 1;
+    seen.set(label, n);
+    return n === 1 ? label : `${label} ${n}`;
   });
 }

@@ -91,6 +91,15 @@ for (const [code, name, ...aliases] of LANGUAGES) {
 /** Tags that say "no particular language". */
 const UNDETERMINED = new Set(['und', 'mul', 'zxx', 'mis', 'unk', 'unknown', 'none', 'n/a']);
 
+/** What a track tagged "zxx" (no linguistic content) is called: the audio of
+ *  a film without dialogue. */
+export const NO_DIALOGUE = 'No dialogue';
+
+/** Is the tag "zxx": no linguistic content, no dialogue? */
+export function isNoDialogue(tag: string | null | undefined): boolean {
+  return (tag ?? '').trim().toLowerCase().split(/[-_]/)[0] === 'zxx';
+}
+
 /**
  * A language tag as one comparable code: the ISO 639-1 code where there is
  * one ("eng", "en-US", "English" → "en"), the primary subtag otherwise, ""
@@ -124,11 +133,13 @@ export function knownLanguage(text: string | null | undefined): string {
 }
 
 /**
- * A language's English name ("de", "ger", "deu" → "German"); "" when the tag
- * names no language. A tag outside the table gets the platform's name for it
- * where the runtime has Intl.DisplayNames (newer TVs, desktop), else the tag.
+ * A language's English name ("de", "ger", "deu" → "German"); "No dialogue"
+ * for "zxx"; "" when the tag names no language. A tag outside the table gets
+ * the platform's name for it where the runtime has Intl.DisplayNames (newer
+ * TVs, desktop), else the tag.
  */
 export function languageName(tag: string | null | undefined): string {
+  if (isNoDialogue(tag)) return NO_DIALOGUE;
   const code = normalizeLanguage(tag);
   if (!code) return '';
   const known = BY_TAG.get(code);
@@ -164,11 +175,18 @@ function namesLanguage(text: string, lang: string, name: string): boolean {
   return BY_TAG.has(lower) || /^[a-z]{2,3}(?:[-_][a-z0-9]{2,8})*$/i.test(text);
 }
 
+/** Does a server label say nothing about the track: "Subtitles", "Track",
+ *  or a tag of no language ("und", "zxx")? */
+function saysNothing(text: string): boolean {
+  const lower = text.toLowerCase();
+  return GENERIC_TITLES.has(lower) || UNDETERMINED.has(lower);
+}
+
 /** What a server label adds to the language name: "English (SDH)" → "SDH";
- *  nothing for "English", "eng" or "Subtitles". */
-function qualifierOf(title: string | undefined, lang: string, name: string): string {
+ *  nothing for "English", "eng", "Subtitles" or "und". */
+export function qualifierOf(title: string | undefined, lang: string, name: string): string {
   let t = (title ?? '').trim();
-  if (!t || GENERIC_TITLES.has(t.toLowerCase()) || namesLanguage(t, lang, name)) return '';
+  if (!t || saysNothing(t) || namesLanguage(t, lang, name)) return '';
   if (name && t.toLowerCase().indexOf(name.toLowerCase()) === 0) t = t.slice(name.length);
   t = t.replace(/^[\s\-–—:·,|]+/, '').trim();
   // Unwrap "(SDH)" / "[Forced]", or drop a closer whose opener went with the
@@ -178,7 +196,7 @@ function qualifierOf(title: string | undefined, lang: string, name: string): str
   if (t.endsWith(']') && !t.includes('[')) t = t.slice(0, -1).trim();
   if (t.startsWith('(') && !t.includes(')')) t = t.slice(1).trim();
   if (t.startsWith('[') && !t.includes(']')) t = t.slice(1).trim();
-  if (!t || GENERIC_TITLES.has(t.toLowerCase()) || namesLanguage(t, lang, name)) return '';
+  if (!t || saysNothing(t) || namesLanguage(t, lang, name)) return '';
   return t;
 }
 
