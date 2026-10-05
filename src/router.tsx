@@ -17,6 +17,7 @@
 //   /notices         what addons told the signed-in person
 //   /zap             full-screen channel-surf
 //   /player/:id      full-screen player
+//   /trailer/:itemId/:extraId  a title's trailer, full screen (no progress)
 import { useEffect, useState } from 'react';
 
 /** A matched route: a stable `name` (used by the App.tsx screen switch) plus
@@ -34,7 +35,8 @@ export interface RouteMatch {
     | 'deleteAccount'
     | 'notices'
     | 'zap'
-    | 'player';
+    | 'player'
+    | 'trailer';
   params: Record<string, string>;
 }
 
@@ -46,6 +48,7 @@ const ROUTES: { name: RouteMatch['name']; re: RegExp; keys: string[] }[] = [
   { name: 'detail', re: /^\/detail\/([^/]+)\/?$/, keys: ['id'] },
   { name: 'person', re: /^\/person\/([^/]+)\/?$/, keys: ['id'] },
   { name: 'player', re: /^\/player\/([^/]+)\/?$/, keys: ['id'] },
+  { name: 'trailer', re: /^\/trailer\/([^/]+)\/([^/]+)\/?$/, keys: ['itemId', 'extraId'] },
   { name: 'search', re: /^\/search\/?$/, keys: [] },
   { name: 'watchlist', re: /^\/watchlist\/?$/, keys: [] },
   { name: 'settings', re: /^\/settings\/?$/, keys: [] },
