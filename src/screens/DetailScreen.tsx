@@ -21,6 +21,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Clapperboard,
   Eye,
   Image as ImageIcon,
   Play,
@@ -39,6 +40,7 @@ import { PersonAvatar } from '@/components/PersonAvatar';
 import { groupCredits } from '@/lib/credits';
 import { opensExpanded, seasonTitle, seasonsInOrder } from '@/lib/seasons';
 import { languageName } from '@/lib/subtitles';
+import { trailerChoice, trailerPath } from '@/lib/trailers';
 
 /** GET /v1/items/{id}/progress — saved resume position (seconds), for the
  *  Resume label. Unreadable → no Resume button; the player reads it again. */
@@ -74,20 +76,6 @@ function runtimeLabel(durationMs?: number): string | null {
   const min = durationMs ? Math.round(durationMs / 60_000) : 0;
   if (min <= 0) return null;
   return min >= 60 ? `${Math.floor(min / 60)}h ${min % 60}m` : `${min}m`;
-}
-
-/** Prefer a YouTube "Official Trailer"; fall back to any trailer. Mirrors the
- *  pickTrailer in both reference clients. */
-function pickTrailer(item: Item): NonNullable<Item['trailers']>[number] | null {
-  const trailers = item.trailers ?? [];
-  if (trailers.length === 0) return null;
-  const yt = trailers.filter((t) => (t.site ?? '').toLowerCase().includes('youtube'));
-  const pool = yt.length ? yt : trailers;
-  const official = pool.find(
-    (t) => /official/i.test(t.title ?? '') && /trailer/i.test(t.title ?? ''),
-  );
-  if (official) return official;
-  return pool.find((t) => /trailer/i.test(t.title ?? '')) ?? pool[0];
 }
 
 /* ──────────────────────────────  screen  ───────────────────────────────────*/
@@ -157,7 +145,7 @@ export default function DetailScreen({ id }: DetailScreenProps): JSX.Element {
     void (async () => {
       try {
         const [loaded, resume, sim] = await Promise.all([
-          api.getItem(id, 'cast,similar,segments,trailers,subtitles'),
+          api.getItem(id, 'cast,similar,segments,trailers,extras,subtitles'),
           fetchResumeSec(id),
           api.similar(id, 12).catch(() => [] as Item[]),
         ]);
@@ -327,7 +315,9 @@ export default function DetailScreen({ id }: DetailScreenProps): JSX.Element {
       : canResume
         ? `Resume ${formatHM(resumeSec)}`
         : 'Play';
-  const trailer = pickTrailer(item);
+  // The trailer this server plays, on the trailer screen; else the link to
+  // one online (@/lib/trailers). A movie's or a series'.
+  const trailer = trailerChoice(item);
   const backdrop = api.backdropUrl(item, streamToken || undefined);
   const poster = api.posterUrl(item, streamToken || undefined);
   const runtime = runtimeLabel(item.duration_ms);
@@ -398,15 +388,21 @@ export default function DetailScreen({ id }: DetailScreenProps): JSX.Element {
               {canResume ? (
                 <SecondaryAction label="Start over" onEnter={() => goPlay(false)} />
               ) : null}
-              {trailer?.url ? (
+              {trailer ? (
                 <SecondaryAction
                   label="Trailer"
-                  icon={<Youtube className="h-5 w-5" />}
+                  icon={
+                    trailer.local ? <Clapperboard className="h-5 w-5" /> : <Youtube className="h-5 w-5" />
+                  }
                   onEnter={() => {
+                    if (trailer.local) {
+                      navigate(trailerPath(item.id, trailer.extra.id));
+                      return;
+                    }
                     // No in-app browser on Tizen; hand the URL to the platform
                     // launcher if available, else open in a new context.
                     try {
-                      window.open(trailer.url, '_blank');
+                      window.open(trailer.link.url, '_blank');
                     } catch {
                       /* sandboxed — ignore */
                     }
