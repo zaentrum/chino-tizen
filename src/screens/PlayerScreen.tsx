@@ -74,7 +74,7 @@ import {
   pickTrailer,
   trailerFailure,
 } from '@/lib/trailers';
-import { useFocusable, useRemoteKey } from '@/tv/focus';
+import { focusKey, useFocusable, useRemoteKey } from '@/tv/focus';
 import { TVKey } from '@/tv/keys';
 import { navigate, back } from '@/router';
 import { useSettings } from '@/state/settings';
@@ -102,6 +102,16 @@ const PROGRESS_INTERVAL_MS = 10_000;
 /** Mark watched at this fraction of the runtime when there's no credits
  *  segment to trigger it first (web parity, p95). */
 const WATCHED_THRESHOLD = 0.95;
+
+/** focusKeys of the menu buttons, by menu, and of Play/Pause: a menu that
+ *  closes hands focus back to the button that opened it, or to Play/Pause
+ *  should that button be gone. */
+const MENU_BUTTON_KEY = {
+  audio: 'player:audio',
+  subtitles: 'player:subtitles',
+  quality: 'player:quality',
+} as const;
+const PLAY_BUTTON_KEY = 'player:play';
 
 /* ─────────────────────────  Trickplay (scrub preview)  ───────────────────
  * Faithful port of chino-web's lib/trickplay (parseTrickplayVTT /
@@ -344,6 +354,14 @@ function Player({
   const [chromeVisible, setChromeVisible] = useState(true);
   type MenuKey = 'audio' | 'subtitles' | 'quality';
   const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
+  // Close menu `m`, focus back on the button that opened it. Its rows unmount
+  // with it, and the focus engine leaves focus nowhere when the focused
+  // element goes: ENTER did nothing and the next arrow landed on the bar's
+  // first button. A pick and BACK both close through here.
+  const closeMenu = (m: MenuKey): void => {
+    setOpenMenu(null);
+    if (!focusKey(MENU_BUTTON_KEY[m])) focusKey(PLAY_BUTTON_KEY);
+  };
 
   // Auto-skip countdown. Active while the playhead sits inside an intro/credits
   // segment AND the matching auto-skip setting is on AND the user hasn't
@@ -950,7 +968,7 @@ function Player({
   useRemoteKey(TVKey.BACK, (e) => {
     e.preventDefault();
     if (openMenu) {
-      setOpenMenu(null);
+      closeMenu(openMenu);
       noteInteraction();
       return;
     }
@@ -1092,6 +1110,7 @@ function Player({
           <ControlButton
             label={playing ? 'Pause' : 'Play'}
             autoFocus
+            focusKey={PLAY_BUTTON_KEY}
             onEnter={togglePlay}
           >
             {playing ? (
@@ -1134,6 +1153,7 @@ function Player({
             <ControlButton
               label="Audio track"
               active={openMenu === 'audio'}
+              focusKey={MENU_BUTTON_KEY.audio}
               onEnter={() => setOpenMenu((m) => (m === 'audio' ? null : 'audio'))}
             >
               <AudioLines className="h-6 w-6" />
@@ -1145,6 +1165,7 @@ function Player({
             <ControlButton
               label="Subtitles"
               active={openMenu === 'subtitles' || activeSubId != null}
+              focusKey={MENU_BUTTON_KEY.subtitles}
               onEnter={() => setOpenMenu((m) => (m === 'subtitles' ? null : 'subtitles'))}
             >
               <Captions className="h-6 w-6" />
@@ -1156,6 +1177,7 @@ function Player({
             <ControlButton
               label="Quality"
               active={openMenu === 'quality'}
+              focusKey={MENU_BUTTON_KEY.quality}
               onEnter={() => setOpenMenu((m) => (m === 'quality' ? null : 'quality'))}
             >
               <Gauge className="h-6 w-6" />
@@ -1165,8 +1187,9 @@ function Player({
       </div>
 
       {/* D-pad menus — float above the control bar; the first row auto-focuses,
-          ENTER selects, BACK closes (handled in the BACK key handler). At most
-          one is open at a time. */}
+          ENTER selects, BACK closes (handled in the BACK key handler), and a
+          closing menu hands focus back to its button (closeMenu). At most one
+          is open at a time. */}
       {openMenu === 'audio' ? (
         <DpadMenu
           title="Audio"
@@ -1182,7 +1205,7 @@ function Player({
               p.setAudioTrack(id);
               setAudioTracks(p.audioTracks());
             }
-            setOpenMenu(null);
+            closeMenu('audio');
             noteInteraction();
           }}
         />
@@ -1205,7 +1228,7 @@ function Player({
             const p = playerRef.current;
             if (p && 'setSubtitles' in p) p.setTextTrack(next);
             setActiveSubId(next);
-            setOpenMenu(null);
+            closeMenu('subtitles');
             noteInteraction();
           }}
         />
@@ -1223,7 +1246,7 @@ function Player({
             // The entry already playing reloads nothing (a packaged title
             // asked with "high" is on Auto).
             if (id !== currentQuality?.id) changeQuality(id);
-            setOpenMenu(null);
+            closeMenu('quality');
             noteInteraction();
           }}
         />
@@ -1241,15 +1264,18 @@ function ControlButton({
   onEnter,
   active,
   autoFocus,
+  focusKey,
   children,
 }: {
   label: string;
   onEnter: () => void;
   active?: boolean;
   autoFocus?: boolean;
+  /** For focusKey(): focus comes back here when a menu closes. */
+  focusKey?: string;
   children: JSX.Element;
 }): JSX.Element {
-  const { ref, focused } = useFocusable({ onEnter, autoFocus });
+  const { ref, focused } = useFocusable({ onEnter, autoFocus, focusKey });
   return (
     <div
       ref={ref}
@@ -1388,8 +1414,9 @@ function SkipButton({
 
 /** A floating D-pad menu (Audio / Subtitles / Quality). Rows are focusable; the
  *  selected row carries a check + accent text. The first row auto-focuses so
- *  the D-pad lands somewhere sensible; ENTER picks; BACK closes (at call site).
- *  Mirrors chino-androidtv's MenuPopover / chino-web's menu cards. */
+ *  the D-pad lands somewhere sensible; ENTER picks; BACK closes, and focus goes
+ *  back to the menu's button (both at call site). Mirrors chino-androidtv's
+ *  MenuPopover / chino-web's menu cards. */
 function DpadMenu({
   title,
   rows,
