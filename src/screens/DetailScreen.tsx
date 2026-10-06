@@ -315,7 +315,7 @@ export default function DetailScreen({ id }: DetailScreenProps): JSX.Element {
       : canResume
         ? `Resume ${formatHM(resumeSec)}`
         : 'Play';
-  // The trailer this server plays, on the trailer screen; else the link to
+  // The trailer this server plays, in the player; else the link to
   // one online (@/lib/trailers). A movie's or a series'.
   const trailer = trailerChoice(item);
   const backdrop = api.backdropUrl(item, streamToken || undefined);

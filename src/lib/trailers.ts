@@ -1,9 +1,9 @@
 // What a title's Trailer plays. A trailer this server plays — one of the
-// title's extras, chino-api's `extras` — comes first: it opens the trailer
-// screen (@/screens/TrailerScreen) on the player engine. Else a link to a
-// trailer online (`trailers`), handed to the platform as before; else the
-// title has no Trailer. The rules are chino-web's (src/lib/trailers.ts), so
-// every client plays the same one. Pure: trailers.test.ts runs it under
+// title's extras, chino-api's `extras` — comes first: it plays in the player
+// (@/screens/PlayerScreen), in its extra mode (@/lib/playMode). Else a link
+// to a trailer online (`trailers`), handed to the platform as before; else
+// the title has no Trailer. The rules are chino-web's (src/lib/trailers.ts),
+// so every client plays the same one. Pure: trailers.test.ts runs it under
 // node --test.
 
 import type { ExtraRef, Trailer } from '../api/types';
@@ -11,7 +11,7 @@ import type { ExtraRef, Trailer } from '../api/types';
 /** The kinds of extra that are a title's trailer, a trailer before a teaser. */
 export const TRAILER_KINDS: readonly string[] = ['trailer', 'teaser'];
 
-/** An extra the trailer screen can play: one this server has (an id,
+/** An extra the player can play: one this server has (an id,
  *  `local: true`), with a master (`play_path`). */
 function playsHere(e: ExtraRef | null | undefined): e is ExtraRef {
   return (
@@ -48,7 +48,7 @@ export function localTrailer(extras: readonly ExtraRef[] | null | undefined): Ex
 }
 
 /** The extra `extraId` of a title, when this server plays it: what the
- *  trailer screen plays. Any kind — the screen plays what it is sent to. */
+ *  player plays in its extra mode. Any kind — it plays what it is sent to. */
 export function findExtra(
   extras: readonly ExtraRef[] | null | undefined,
   extraId: string,
@@ -72,7 +72,7 @@ export function pickTrailer(trailers: readonly Trailer[] | null | undefined): Tr
   return pool.find((t) => /trailer/i.test(t.title ?? '')) ?? pool[0];
 }
 
-/** What the Trailer opens: an extra on the trailer screen, or a link. */
+/** What the Trailer opens: an extra in the player, or a link. */
 export type TrailerChoice = { local: true; extra: ExtraRef } | { local: false; link: Trailer };
 
 /** The title's Trailer: its local trailer, else pickTrailer's link; null
@@ -87,7 +87,7 @@ export function trailerChoice(
   return link && link.url ? { local: false, link } : null;
 }
 
-/** The trailer screen's route for a title's extra. */
+/** The route that plays a title's extra in the player. */
 export function trailerPath(itemId: string, extraId: string): string {
   return `/trailer/${encodeURIComponent(itemId)}/${encodeURIComponent(extraId)}`;
 }
