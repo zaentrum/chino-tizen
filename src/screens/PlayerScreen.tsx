@@ -9,6 +9,14 @@
 // hidden, media keys ±30s, no resume dialog, countdown auto-skip the DPAD can
 // cancel).
 //
+// One player for everything: a title's extras (a trailer, a teaser, …) play
+// here too, in the extra mode (/trailer/:itemId/:extraId; @/lib/playMode says
+// what each mode asks for). The same controls, track menus and remote keys;
+// none of a title's own — no play info, progress, watched, subtitles,
+// segments, trickplay or next episode. An extra starts at the head, with
+// sound, and its end goes back to the title; one that is not there says
+// "Trailer not available", with the title's trailer online where it has one.
+//
 // The screen drives the engine through the @/player ChinoPlayer surface only —
 // the AVPlay (on-device hardware decode of the catalogue's 4K HEVC packages) ↔
 // hls.js (desktop dev / on-device fallback) choice is invisible above this
@@ -29,9 +37,11 @@ import {
   Pause,
   Play,
   Rewind,
+  RotateCw,
   SkipForward,
+  Youtube,
 } from 'lucide-react';
-import type { Item, PlayInfo, Segment } from '@/api/types';
+import type { ExtraRef, Item, PlayInfo, Segment, Trailer } from '@/api/types';
 import { api } from '@/api/instance';
 import { authStore } from '@/auth/session';
 import {
@@ -49,6 +59,7 @@ import {
   type ProgressGuard,
 } from '@/lib/progress';
 import { audioTrackFor, type AudioWant } from '@/lib/audio';
+import { extraHeading, playPlan } from '@/lib/playMode';
 import { chosenQuality, qualityMenu } from '@/lib/qualities';
 import {
   buildSubtitleTracks,
@@ -56,9 +67,16 @@ import {
   playingAudioLanguage,
   subtitleKind,
 } from '@/lib/subtitles';
+import {
+  extraMasterUrl,
+  findExtra,
+  isNotFoundError,
+  pickTrailer,
+  trailerFailure,
+} from '@/lib/trailers';
 import { useFocusable, useRemoteKey } from '@/tv/focus';
 import { TVKey } from '@/tv/keys';
-import { navigate, back, useRoute } from '@/router';
+import { navigate, back } from '@/router';
 import { useSettings } from '@/state/settings';
 import { Spinner } from '@/components/Spinner';
 import { SubtitleOverlay } from '@/components/SubtitleOverlay';
@@ -202,20 +220,61 @@ async function fetchNextEpisodeId(parentId: string, afterItemId: string): Promis
     .catch(() => null);
 }
 
+/** Why nothing plays, as the error screen says it; `retry` where Try again
+ *  can help. */
+interface Failure {
+  title: string;
+  message: string;
+  retry?: boolean;
+}
+
+/** A title that did not play: the engine's or the server's reason. */
+function titleFailure(message: string): Failure {
+  return { title: 'Playback failed', message };
+}
+
+/** An extra that is not there — no such title, an extra it does not list, a
+ *  master that answers 400, 404 or 410 — or that failed otherwise. */
+function extraFailure(kind: 'not-found' | 'failed'): Failure {
+  return kind === 'not-found'
+    ? { title: 'Trailer not available', message: "The server doesn't have this trailer. It may have been removed." }
+    : { title: "Couldn't play the trailer", message: 'Check the connection, or try again in a moment.', retry: true };
+}
+
 /* ──────────────────────────────  screen  ───────────────────────────────── */
 
+interface PlayerScreenProps {
+  /** The title: the one that plays, or the one whose extra does. */
+  itemId: string;
+  /** One of the title's extras (@/lib/trailers' findExtra), played in the
+   *  extra mode; absent, the title plays. */
+  extraId?: string;
+}
+
 /**
- * Full-screen player. Reads the catalogue id from `useRoute().params.id` plus
- * the `?resume=<sec>` / `?startover=1` query flags off window.location.search
- * (the router strips the query before matching, so we read it raw — same as the
- * search screen). On mount it fetches the item, the play info and a stream
- * token in parallel, builds the HLS master URL and loads it into a full-screen
- * <ChinoPlayer> with the resolved resume point. The rest is chrome.
+ * Full-screen player for the title `itemId`, or for its extra `extraId`. A
+ * title also reads the `?resume=<sec>` / `?startover=1` query flags off
+ * window.location.search (the router strips the query before matching, so we
+ * read it raw — same as the search screen). On mount it fetches the item, the
+ * play info and a stream token in parallel, builds the HLS master URL and
+ * loads it into a full-screen <ChinoPlayer> with the resolved resume point.
+ * The rest is chrome. Try again (an extra that failed) plays afresh: a new
+ * mount, with a new engine, refs and guards.
  */
-export default function PlayerScreen(): JSX.Element {
-  const { params } = useRoute();
-  const itemId = params.id ?? '';
+export default function PlayerScreen(props: PlayerScreenProps): JSX.Element {
+  const [attempt, setAttempt] = useState(0);
+  return <Player key={attempt} {...props} onRetry={() => setAttempt((n) => n + 1)} />;
+}
+
+function Player({
+  itemId,
+  extraId,
+  onRetry,
+}: PlayerScreenProps & { onRetry: () => void }): JSX.Element {
   const { settings } = useSettings();
+  // What this mode asks for (@/lib/playMode). App keys the screen by the
+  // title and the extra, so it is one mode for the life of a mount.
+  const plan = useMemo(() => playPlan(extraId ? 'extra' : 'title'), [extraId]);
 
   // The full-screen surface the engine renders into (a <video> for hls, a
   // native <object> for AVPlay). The player binds to this on mount.
@@ -224,8 +283,10 @@ export default function PlayerScreen(): JSX.Element {
 
   // Load lifecycle.
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<Failure | null>(null);
   const [item, setItem] = useState<Item | null>(null);
+  // The extra playing, in the extra mode, once the title lists it.
+  const [extra, setExtra] = useState<ExtraRef | null>(null);
   const [playInfo, setPlayInfo] = useState<PlayInfo | null>(null);
 
   // Stream token + caps captured once at mount; both feed every master URL
@@ -292,10 +353,20 @@ export default function PlayerScreen(): JSX.Element {
   // Once-per-mount guards.
   const markedWatchedRef = useRef(false);
   const autoAdvancedRef = useRef(false);
+  const leftRef = useRef(false);
 
   // Bump on any remote input to re-show the chrome + restart the hide timer.
   const [interactionTick, setInteractionTick] = useState(0);
   const noteInteraction = useCallback(() => setInteractionTick((n) => n + 1), []);
+
+  // Back to the screen before — BACK, the Back button, the end, the error
+  // screen — once: the end and a BACK can come together, and two would go
+  // back twice (past the title, after a short trailer).
+  const leave = useCallback(() => {
+    if (leftRef.current) return;
+    leftRef.current = true;
+    back();
+  }, []);
 
   // Refs the engine-event closures + intervals read so they aren't stale (the
   // listeners register once with []-deps).
@@ -342,29 +413,34 @@ export default function PlayerScreen(): JSX.Element {
      PLAYED to (the guard's) — never the head of a stream whose resume seek has
      not landed, never a seek target playback has not reached, never anything
      when the saved position could not be read. chino-api keeps one position
-     per user, so a wrong write here loses the viewer's place everywhere. ── */
+     per user, so a wrong write here loses the viewer's place everywhere. An
+     extra has no position: nothing is written for one. ── */
   const postProgressNow = useCallback(() => {
+    if (!plan.progress) return;
     const pos = guardRef.current?.position() ?? null;
     if (!itemId || pos == null) return;
     const dur = Math.floor(durationRef.current);
     void api.postProgress(itemId, pos, dur > 0 ? dur : 0).catch(() => undefined);
-  }, [itemId]);
+  }, [itemId, plan]);
 
   /* ── Mount: fetch item + play info + stream token in parallel, build the
      master URL, create the engine and load it at the resolved resume point.
-     Segments + trickplay are fetched alongside (best-effort, non-gating). ── */
+     Segments + trickplay are fetched alongside (best-effort, non-gating). An
+     extra asks for the title and a stream token only, and plays its own
+     master from the head (@/lib/playMode). ── */
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage || !itemId) {
       if (!itemId) {
-        setError('No item to play.');
+        setFailure(titleFailure('No item to play.'));
         setLoading(false);
       }
       return undefined;
     }
 
     // Read the playback intent flags off the raw query — the router strips the
-    // query before matching, so window.location.search is the source.
+    // query before matching, so window.location.search is the source. Only a
+    // title's progress reads them.
     const search = new URLSearchParams(window.location.search);
     const startover = search.get('startover') === '1';
     const resumeParam = Number(search.get('resume'));
@@ -375,6 +451,12 @@ export default function PlayerScreen(): JSX.Element {
     capsRef.current = caps;
 
     let cancelled = false;
+    // Nothing plays: the error screen says why.
+    const fail = (f: Failure) => {
+      if (cancelled) return;
+      setFailure(f);
+      setLoading(false);
+    };
     const player = createPlayer(stage);
     playerRef.current = player;
     // "Original" in Settings is no preference: the source's default plays.
@@ -423,7 +505,7 @@ export default function PlayerScreen(): JSX.Element {
       void handleEnded();
     });
     const offError = player.on('error', () => {
-      if (!cancelled) setError('Playback failed. This title could not be played.');
+      fail(extraId ? extraFailure('failed') : titleFailure('Playback failed. This title could not be played.'));
     });
 
     void (async () => {
@@ -432,15 +514,24 @@ export default function PlayerScreen(): JSX.Element {
         // payload carries none. null = it could not be read.
         const [loadedItem, info, token, savedSec, sidecars] = await Promise.all([
           api.getItem(itemId),
-          api.playInfo(itemId, caps).catch(() => null),
+          plan.playInfo ? api.playInfo(itemId, caps).catch(() => null) : null,
           api.streamToken(),
-          api.getProgress(itemId).catch(() => null),
-          api.subtitles(itemId).catch(() => null),
+          plan.progress ? api.getProgress(itemId).catch(() => null) : null,
+          plan.subtitles ? api.subtitles(itemId).catch(() => null) : null,
         ]);
         if (cancelled) return;
         setItem(loadedItem);
         setPlayInfo(info);
         streamTokenRef.current = token;
+
+        // An extra plays from its own master; one the title does not list is
+        // not there.
+        const found = extraId ? findExtra(loadedItem.extras, extraId) : null;
+        if (extraId && !found) {
+          fail(extraFailure('not-found'));
+          return;
+        }
+        setExtra(found);
 
         // Subtitles: the sidecars + the embedded text streams, labelled by
         // language. Off by default unless the audio is not in the preferred
@@ -448,24 +539,27 @@ export default function PlayerScreen(): JSX.Element {
         // is the preferred audio language where the title has it (the engine
         // switches to it), else the default track's. Should /subtitles fail,
         // the item's own rows still name the sidecars (their url is the
-        // documented /api/v1/play/subs/{id}.vtt).
-        const drawsPgs = 'setSubtitles' in player;
-        const tracks = buildSubtitleTracks({
-          itemId,
-          sidecars: sidecars ?? loadedItem.subtitles ?? [],
-          embedded: info?.subtitle_tracks ?? [],
-          resolve: (path) => api.assetUrl(path, token) ?? path,
-          pgs: drawsPgs,
-        });
-        const initialSub = pickDefaultSubtitle(tracks, {
-          audioLang: playingAudioLanguage(info?.audio_tracks, settings.preferredAudioLang),
-          preferredLang: settings.preferredSubtitleLang,
-        });
-        setSubtitles(tracks);
-        setActiveSubId(initialSub);
-        if (drawsPgs) {
-          (player as ChinoPlayer & SubtitleCapableEngine).setSubtitles(tracks);
-          player.setTextTrack(initialSub);
+        // documented /api/v1/play/subs/{id}.vtt). An extra has none: the
+        // item's rows are the title's.
+        if (plan.subtitles) {
+          const drawsPgs = 'setSubtitles' in player;
+          const tracks = buildSubtitleTracks({
+            itemId,
+            sidecars: sidecars ?? loadedItem.subtitles ?? [],
+            embedded: info?.subtitle_tracks ?? [],
+            resolve: (path) => api.assetUrl(path, token) ?? path,
+            pgs: drawsPgs,
+          });
+          const initialSub = pickDefaultSubtitle(tracks, {
+            audioLang: playingAudioLanguage(info?.audio_tracks, settings.preferredAudioLang),
+            preferredLang: settings.preferredSubtitleLang,
+          });
+          setSubtitles(tracks);
+          setActiveSubId(initialSub);
+          if (drawsPgs) {
+            (player as ChinoPlayer & SubtitleCapableEngine).setSubtitles(tracks);
+            player.setTextTrack(initialSub);
+          }
         }
 
         const resolvedQuality = info?.default_quality ?? '';
@@ -476,42 +570,71 @@ export default function PlayerScreen(): JSX.Element {
         // ?startover=1 → the head; ?resume=<sec> (Zap hand-off) → exactly
         // there; else the saved position unless barely started or finished.
         // The finished test wants the real runtime: /play/info's, else the
-        // catalogue's.
-        const resume = {
-          savedSec,
-          durationSec: (info?.duration_ms || loadedItem.duration_ms || 0) / 1000,
-          startover,
-          handoffSec: resumeFromQuery,
-        };
-        const startSec = resumeStartSec(resume);
-        // Arm the write guard before the stream starts: the head of the
-        // stream, reported before the resume seek lands, must never be saved.
-        const guard = createProgressGuard({ writable: mayWriteProgress(resume) });
-        guard.expectSeek(startSec);
-        guardRef.current = guard;
+        // catalogue's. An extra starts at the head, and arms no write guard:
+        // it writes nothing.
+        let startSec = 0;
+        if (plan.progress) {
+          const resume = {
+            savedSec,
+            durationSec: (info?.duration_ms || loadedItem.duration_ms || 0) / 1000,
+            startover,
+            handoffSec: resumeFromQuery,
+          };
+          startSec = resumeStartSec(resume);
+          // Arm the write guard before the stream starts: the head of the
+          // stream, reported before the resume seek lands, must never be saved.
+          const guard = createProgressGuard({ writable: mayWriteProgress(resume) });
+          guard.expectSeek(startSec);
+          guardRef.current = guard;
+        }
 
-        const url = api.masterUrl(itemId, {
-          streamToken: token,
-          quality: resolvedQuality || undefined,
-          caps,
-        });
+        // An extra's master is its play_path with the stream token and this
+        // TV's caps, as a title's master is asked for.
+        const url = found
+          ? extraMasterUrl(api.assetUrl(found.play_path, token) ?? found.play_path, caps)
+          : api.masterUrl(itemId, {
+              streamToken: token,
+              quality: resolvedQuality || undefined,
+              caps,
+            });
+        if (plan.checkMaster) {
+          // AVPlay does not say why a master did not open: it is asked for
+          // once first, so one that is not there says so. No answer at all
+          // leaves it to the engine.
+          const status = await fetch(url).then(
+            (r) => r.status,
+            () => null,
+          );
+          if (cancelled) return;
+          if (status != null && status >= 400) {
+            fail(extraFailure(trailerFailure(status)));
+            return;
+          }
+        }
         setLoading(false);
         await player.load(url, { startSec: startSec > 0 ? startSec : undefined });
+        // From the head, with sound: AVPlay plays once it is prepared, the
+        // hls.js engine when told.
+        if (plan.playOnLoad && !cancelled) player.play();
       } catch (e) {
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : 'Could not start playback.');
-          setLoading(false);
-        }
+        fail(
+          extraId
+            ? extraFailure(isNotFoundError(e) ? 'not-found' : 'failed')
+            : titleFailure(e instanceof Error ? e.message : 'Could not start playback.'),
+        );
       }
     })();
 
-    // Segments + trickplay — best-effort, never gate playback.
-    void api
-      .segments(itemId)
-      .then((s) => {
-        if (!cancelled) setSegments(s);
-      })
-      .catch(() => undefined);
+    // Segments + trickplay — best-effort, never gate playback. An extra has
+    // neither.
+    if (plan.segments) {
+      void api
+        .segments(itemId)
+        .then((s) => {
+          if (!cancelled) setSegments(s);
+        })
+        .catch(() => undefined);
+    }
 
     return () => {
       cancelled = true;
@@ -531,15 +654,17 @@ export default function PlayerScreen(): JSX.Element {
       playerRef.current = null;
     };
     // Mount-once: the player + listeners are reused across the play session.
-    // itemId is stable for one mount (App keys the screen by the item id, so
-    // a new id is a fresh mount with fresh refs). settings is read for the
-    // initial audio and subtitle picks only.
+    // itemId and extraId (so the plan) are stable for one mount (App keys the
+    // screen by them, so a new one is a fresh mount with fresh refs).
+    // settings is read for the initial audio and subtitle picks only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [itemId]);
+  }, [itemId, extraId]);
 
   /* ── Trickplay VTT — fetch once the stream token + play info land, and only
-     for packaged items (others 404 → degrade to a plain scrub bar). ── */
+     for packaged items (others 404 → degrade to a plain scrub bar). An extra
+     has none. ── */
   useEffect(() => {
+    if (!plan.trickplay) return undefined;
     const token = streamTokenRef.current;
     if (!token || !itemId) return undefined;
     // Wait for play info; skip non-packaged modes entirely so we don't log a
@@ -558,14 +683,14 @@ export default function PlayerScreen(): JSX.Element {
       })
       .catch(() => setTrickplayCues([]));
     return () => ctrl.abort();
-  }, [itemId, playInfo]);
+  }, [itemId, playInfo, plan]);
 
-  /* ── Progress: post every ~10s while playing. ── */
+  /* ── Progress: post every ~10s while playing (a title's only). ── */
   useEffect(() => {
-    if (!playing) return undefined;
+    if (!playing || !plan.progress) return undefined;
     const id = window.setInterval(postProgressNow, PROGRESS_INTERVAL_MS);
     return () => window.clearInterval(id);
-  }, [playing, postProgressNow]);
+  }, [playing, plan, postProgressNow]);
 
   /* ── Auto-hide the chrome ~3.5s after the last input while playing; stay up
      while paused or while a menu is open. Any input bumps interactionTick,
@@ -641,39 +766,40 @@ export default function PlayerScreen(): JSX.Element {
   ]);
 
   /* ── Mark watched on credits entry OR at >=95% of the runtime, once per
-     mount (web parity). ── */
+     mount (web parity). A title's only: an extra is never marked. ── */
   useEffect(() => {
-    if (markedWatchedRef.current || !itemId) return;
+    if (!plan.watched || markedWatchedRef.current || !itemId) return;
     const inCredits = activeSegment?.kind.toLowerCase() === 'credits';
     const near95 =
       effectiveDuration > 0 && current / effectiveDuration >= WATCHED_THRESHOLD;
     if (!inCredits && !near95) return;
     markedWatchedRef.current = true;
     void api.setWatched(itemId).catch(() => undefined);
-  }, [activeSegment, current, effectiveDuration, itemId]);
+  }, [activeSegment, current, effectiveDuration, itemId, plan]);
 
   /* ── End-of-media: auto-play the next episode (series + setting on), else
-     pop back. Guarded so it fires once. ── */
+     pop back — an extra back to its title. Guarded so it fires once. ── */
   const handleEnded = useCallback(async () => {
     if (autoAdvancedRef.current) return;
     autoAdvancedRef.current = true;
     postProgressNow();
     const parentId = item?.parent_id;
-    if (settings.autoPlayNext && item?.type === 'episode' && parentId) {
+    if (plan.nextEpisode && settings.autoPlayNext && item?.type === 'episode' && parentId) {
       const nextId = await fetchNextEpisodeId(parentId, itemId);
       if (nextId) {
         navigate(`/player/${encodeURIComponent(nextId)}`);
         return;
       }
     }
-    back();
-  }, [item, itemId, settings.autoPlayNext, postProgressNow]);
+    leave();
+  }, [item, itemId, plan, settings.autoPlayNext, postProgressNow, leave]);
 
   /* ── Quality switch: re-load the master with the new ?q= at the position
      played (chino-web rebuilds hls.js on the new URL; we do the engine-level
      equivalent via load(..., { startSec })). On a packaged title a rung's
      name serves that rung alone and "auto" the ladder, which the engine
-     adapts over by itself; on the fly the name is the transcode rung. ── */
+     adapts over by itself; on the fly the name is the transcode rung. A
+     title's only: an extra has no play info, so no Quality menu. ── */
   const changeQuality = useCallback((id: string) => {
     const p = playerRef.current;
     if (!p || id === qualityRef.current) return;
@@ -728,6 +854,8 @@ export default function PlayerScreen(): JSX.Element {
       TVKey.MEDIA_REWIND,
     ],
     (e) => {
+      // Over the error screen the keys are its buttons', not the transport's.
+      if (failure) return;
       const code = e.keyCode || e.which;
 
       // Any remote press wakes the chrome (web + androidtv parity).
@@ -816,20 +944,35 @@ export default function PlayerScreen(): JSX.Element {
     }
     playerRef.current?.pause();
     postProgressNow();
-    back();
+    leave();
   });
 
   /* ──────────────────────────────  render  ─────────────────────────────── */
 
-  if (error) {
-    return <ErrorScreen message={error} />;
+  if (failure) {
+    return (
+      <ErrorScreen
+        {...failure}
+        // An extra's: the title's trailer online, where it has one.
+        online={extraId ? pickTrailer(item?.trailers) : null}
+        onBack={leave}
+        onRetry={failure.retry ? onRetry : undefined}
+      />
+    );
   }
 
   const showSpinner = loading || (!firstFrame && buffering);
+  // An extra is not an episode, whatever its title is.
   const episodeBadge =
-    item?.season_number != null && item?.episode_number != null
+    !extraId && item?.season_number != null && item?.episode_number != null
       ? `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')}`
       : null;
+  // A title's name; an extra's after its title's ("Big Buck Bunny · Trailer").
+  const heading = extra
+    ? extraHeading(item?.title, extra.title)
+    : extraId
+      ? 'Loading…'
+      : item?.title ?? 'Loading…';
   // A packaged title's Auto and rungs, or the on-the-fly ladder (@/lib/
   // qualities); empty when there is nothing to choose.
   const qualities = qualityMenu(playInfo);
@@ -852,7 +995,10 @@ export default function PlayerScreen(): JSX.Element {
       {/* Loading / buffering overlay — Spinner per the contract. */}
       {showSpinner ? (
         <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-black/40">
-          <Spinner label={loading ? 'Preparing your title…' : 'Buffering…'} fullscreen={false} />
+          <Spinner
+            label={loading ? (extraId ? 'Preparing the trailer…' : 'Preparing your title…') : 'Buffering…'}
+            fullscreen={false}
+          />
         </div>
       ) : null}
 
@@ -897,7 +1043,7 @@ export default function PlayerScreen(): JSX.Element {
               {episodeBadge}
             </span>
           ) : null}
-          <h1 className="truncate text-4xl font-bold text-white">{item?.title ?? 'Loading…'}</h1>
+          <h1 className="truncate text-4xl font-bold text-white">{heading}</h1>
         </div>
 
         {/* Scrub / progress bar with trickplay preview. */}
@@ -921,7 +1067,7 @@ export default function PlayerScreen(): JSX.Element {
             onEnter={() => {
               playerRef.current?.pause();
               postProgressNow();
-              back();
+              leave();
             }}
           >
             <ArrowLeft className="h-6 w-6" />
@@ -949,8 +1095,9 @@ export default function PlayerScreen(): JSX.Element {
 
           {/* Episode prev/next (series only) — best-effort resolve via the
               series next-episode endpoint; prev has no dedicated endpoint so
-              we offer next only, matching what the shared API exposes. */}
-          {item?.type === 'episode' && item.parent_id ? (
+              we offer next only, matching what the shared API exposes. Never
+              for an extra. */}
+          {plan.nextEpisode && item?.type === 'episode' && item.parent_id ? (
             <ControlButton
               label="Next episode"
               onEnter={() => {
@@ -1291,29 +1438,79 @@ function MenuRow({
   );
 }
 
-/** Terminal-error surface with a focusable Back affordance. */
-function ErrorScreen({ message }: { message: string }): JSX.Element {
-  const { ref, focused } = useFocusable({ onEnter: () => back(), autoFocus: true });
+/** Terminal-error surface: what went wrong, and a focusable Back. For an
+ *  extra also Try again, where it can help, and the title's trailer online
+ *  where it has one — handed to the platform as the detail screen does. */
+function ErrorScreen({
+  title,
+  message,
+  online,
+  onBack,
+  onRetry,
+}: {
+  title: string;
+  message: string;
+  online?: Trailer | null;
+  onBack: () => void;
+  onRetry?: () => void;
+}): JSX.Element {
   useRemoteKey(TVKey.BACK, (e) => {
     e.preventDefault();
-    back();
+    onBack();
   });
+  const youtube = (online?.site ?? '').toLowerCase().includes('youtube');
   return (
     <div className="flex h-screen w-full flex-col items-center justify-center gap-6 bg-black px-16 text-center">
       <Loader2 className="h-10 w-10 text-red" aria-hidden />
-      <p className="text-2xl font-semibold text-white">Playback failed</p>
+      <p className="text-2xl font-semibold text-white">{title}</p>
       <p className="max-w-2xl text-lg text-muted">{message}</p>
-      <div
-        ref={ref}
-        data-focused={focused}
-        className={[
-          'inline-flex cursor-default select-none items-center gap-2 rounded-full px-6 py-3 text-xl font-semibold',
-          focused ? 'bg-white text-black' : 'bg-white/15 text-white',
-        ].join(' ')}
-      >
-        <ArrowLeft className="h-5 w-5" />
-        Back
+      <div className="flex items-center gap-4">
+        <ErrorAction label="Back" icon={<ArrowLeft className="h-5 w-5" />} onEnter={onBack} autoFocus />
+        {onRetry ? (
+          <ErrorAction label="Try again" icon={<RotateCw className="h-5 w-5" />} onEnter={onRetry} />
+        ) : null}
+        {online?.url ? (
+          <ErrorAction
+            label={youtube ? 'Watch on YouTube' : 'Watch online'}
+            icon={<Youtube className="h-5 w-5" />}
+            onEnter={() => {
+              // No in-app browser on Tizen: hand the URL to the platform.
+              try {
+                window.open(online.url, '_blank');
+              } catch {
+                /* sandboxed — ignore */
+              }
+            }}
+          />
+        ) : null}
       </div>
+    </div>
+  );
+}
+
+function ErrorAction({
+  label,
+  icon,
+  onEnter,
+  autoFocus,
+}: {
+  label: string;
+  icon: JSX.Element;
+  onEnter: () => void;
+  autoFocus?: boolean;
+}): JSX.Element {
+  const { ref, focused } = useFocusable({ onEnter, autoFocus });
+  return (
+    <div
+      ref={ref}
+      data-focused={focused}
+      className={[
+        'inline-flex cursor-default select-none items-center gap-2 rounded-full px-6 py-3 text-xl font-semibold',
+        focused ? 'bg-white text-black' : 'bg-white/15 text-white',
+      ].join(' ')}
+    >
+      {icon}
+      {label}
     </div>
   );
 }

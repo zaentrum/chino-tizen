@@ -31,10 +31,9 @@ import DeleteAccountScreen from './screens/DeleteAccountScreen';
 import NoticesScreen from './screens/NoticesScreen';
 import ZapScreen from './screens/ZapScreen';
 import PlayerScreen from './screens/PlayerScreen';
-import TrailerScreen from './screens/TrailerScreen';
 
-/** Picks the screen for the current route. Detail and Trailer take their ids
- *  as props; the other id/param screens read useRoute() themselves. */
+/** Picks the screen for the current route. Detail and the player take their
+ *  ids as props; the other id/param screens read useRoute() themselves. */
 function MainApp(): JSX.Element {
   const { path } = useRoute();
   const { name, params } = matchRoute(path);
@@ -65,12 +64,13 @@ function MainApp(): JSX.Element {
       // Keyed by the item: the next episode (auto-play, "Next episode") is a
       // fresh player, not the last one's refs — its resume position, watched
       // and auto-advance guards would otherwise carry over to the new title.
-      return <PlayerScreen key={params.id} />;
+      return <PlayerScreen key={params.id} itemId={params.id} />;
     case 'trailer':
-      // A trailer of its own engine and nothing else of the player: no
-      // progress, no watched state (@/screens/TrailerScreen).
+      // A title's extra, its trailer, in the same player, in its extra mode:
+      // the same controls, menus and keys, and nothing of the title's own —
+      // no progress, no watched state (@/lib/playMode). Keyed by both ids.
       return (
-        <TrailerScreen
+        <PlayerScreen
           key={`${params.itemId}/${params.extraId}`}
           itemId={params.itemId}
           extraId={params.extraId}

@@ -17,7 +17,7 @@
 //   /notices         what addons told the signed-in person
 //   /zap             full-screen channel-surf
 //   /player/:id      full-screen player
-//   /trailer/:itemId/:extraId  a title's trailer, full screen (no progress)
+//   /trailer/:itemId/:extraId  a title's trailer, in the player's extra mode
 import { useEffect, useState } from 'react';
 
 /** A matched route: a stable `name` (used by the App.tsx screen switch) plus
