@@ -502,7 +502,8 @@ function Player({
     });
     const offEnded = player.on('ended', () => {
       setPlaying(false);
-      void handleEnded();
+      // Through the ref: this render's handleEnded has no item yet.
+      void handleEndedRef.current();
     });
     const offError = player.on('error', () => {
       fail(extraId ? extraFailure('failed') : titleFailure('Playback failed. This title could not be played.'));
@@ -786,6 +787,8 @@ function Player({
     const parentId = item?.parent_id;
     if (plan.nextEpisode && settings.autoPlayNext && item?.type === 'episode' && parentId) {
       const nextId = await fetchNextEpisodeId(parentId, itemId);
+      // BACK while the next one was asked for: the viewer has left.
+      if (leftRef.current) return;
       if (nextId) {
         navigate(`/player/${encodeURIComponent(nextId)}`);
         return;
@@ -793,6 +796,15 @@ function Player({
     }
     leave();
   }, [item, itemId, plan, settings.autoPlayNext, postProgressNow, leave]);
+
+  // The 'ended' listener registers once, at mount, before the item has
+  // loaded: it calls the latest handleEnded through this ref. The first
+  // render's finds no item, so no episode — it never asked for the next one
+  // and always went back.
+  const handleEndedRef = useRef(handleEnded);
+  useEffect(() => {
+    handleEndedRef.current = handleEnded;
+  }, [handleEnded]);
 
   /* ── Quality switch: re-load the master with the new ?q= at the position
      played (chino-web rebuilds hls.js on the new URL; we do the engine-level
