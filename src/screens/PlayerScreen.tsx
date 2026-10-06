@@ -76,7 +76,7 @@ import {
 } from '@/lib/trailers';
 import { focusKey, useFocusable, useRemoteKey } from '@/tv/focus';
 import { TVKey } from '@/tv/keys';
-import { navigate, back } from '@/router';
+import { back, replace } from '@/router';
 import { useSettings } from '@/state/settings';
 import { Spinner } from '@/components/Spinner';
 import { SubtitleOverlay } from '@/components/SubtitleOverlay';
@@ -228,6 +228,13 @@ async function fetchNextEpisodeId(parentId: string, afterItemId: string): Promis
     .nextEpisode(parentId, afterItemId)
     .then((r) => r.next?.id ?? null)
     .catch(() => null);
+}
+
+/** Open the next episode in this one's place in history, as chino-web and
+ *  chino-androidtv do: BACK from it leaves the player, for the screen it was
+ *  opened from, instead of playing the episode just finished again. */
+function playNextEpisode(nextId: string): void {
+  replace(`/player/${encodeURIComponent(nextId)}`);
 }
 
 /** Why nothing plays, as the error screen says it; `retry` where Try again
@@ -805,10 +812,11 @@ function Player({
     const parentId = item?.parent_id;
     if (plan.nextEpisode && settings.autoPlayNext && item?.type === 'episode' && parentId) {
       const nextId = await fetchNextEpisodeId(parentId, itemId);
-      // BACK while the next one was asked for: the viewer has left.
+      // BACK while the next one was asked for: the viewer has left, and the
+      // next episode would take the place of the screen they went back to.
       if (leftRef.current) return;
       if (nextId) {
-        navigate(`/player/${encodeURIComponent(nextId)}`);
+        playNextEpisode(nextId);
         return;
       }
     }
@@ -1135,9 +1143,10 @@ function Player({
                 const parentId = item.parent_id;
                 if (!parentId) return;
                 void fetchNextEpisodeId(parentId, itemId).then((nextId) => {
-                  if (nextId) {
+                  // Not after BACK, as at the end (handleEnded).
+                  if (nextId && !leftRef.current) {
                     postProgressNow();
-                    navigate(`/player/${encodeURIComponent(nextId)}`);
+                    playNextEpisode(nextId);
                   }
                 });
               }}
