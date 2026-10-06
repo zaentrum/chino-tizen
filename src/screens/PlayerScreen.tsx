@@ -61,6 +61,7 @@ import {
 import { audioTrackFor, type AudioWant } from '@/lib/audio';
 import { extraHeading, playPlan } from '@/lib/playMode';
 import { chosenQuality, qualityMenu } from '@/lib/qualities';
+import { createSeekAccumulator, type SeekAccumulator } from '@/lib/seek';
 import {
   buildSubtitleTracks,
   pickDefaultSubtitle,
@@ -411,6 +412,14 @@ function Player({
   // update).
   const firstFrameRef = useRef(false);
   const pausedRef = useRef(true);
+  // Where the remote's next seek starts from (@/lib/seek): the target of the
+  // seek in flight, until the engine reports the playhead there. AVPlay
+  // reports it on its playback tick only, never while paused, so right after
+  // a seek it reports the playhead from before. Told of every seek the guard
+  // is.
+  const seeksRef = useRef<SeekAccumulator | null>(null);
+  if (!seeksRef.current) seeksRef.current = createSeekAccumulator();
+  const seeks = seeksRef.current;
 
   /* ── Force the document to pure black while mounted so any sliver around the
      stage shows black, not the shell's #0D1117. Mirrors chino-web. ── */
@@ -517,7 +526,10 @@ function Player({
     });
     const offTime = player.on('timeupdate', () => {
       const t = player.currentTime();
-      setCurrent(t);
+      // The scrub bar shows where a seek in flight goes until the engine
+      // reports the playhead there, not the playhead from before it.
+      seeks.reported(t);
+      setCurrent(seeks.position(t));
       // The engine's own playhead while playing is the only thing the resume
       // position is taken from.
       if (firstFrameRef.current && !pausedRef.current) guardRef.current?.played(t);
@@ -612,6 +624,8 @@ function Player({
           const guard = createProgressGuard({ writable: mayWriteProgress(resume) });
           guard.expectSeek(startSec);
           guardRef.current = guard;
+          // A seek before the resume seek lands starts from where it goes.
+          if (startSec > 0) seeks.seekTo(startSec, resume.durationSec);
         }
 
         // An extra's master is its play_path with the stream token and this
@@ -742,10 +756,10 @@ function Player({
   const skipSegment = useCallback((seg: Segment) => {
     const p = playerRef.current;
     if (!p) return;
-    const target = seg.end_ms / 1000 + 0.25;
+    const target = seeks.seekTo(seg.end_ms / 1000 + 0.25, durationRef.current);
     guardRef.current?.expectSeek(target);
     p.seek(target);
-  }, []);
+  }, [seeks]);
 
   /* ── Auto-skip countdown. Arms when the playhead enters an intro/credits
      segment whose auto-skip setting is on and that the user hasn't cancelled
@@ -843,7 +857,9 @@ function Player({
     if (!p || id === qualityRef.current) return;
     setQuality(id);
     qualityRef.current = id;
-    const pos = Math.floor(p.currentTime());
+    // Where the viewer is, or a seek in flight goes: it lands in the new
+    // source too.
+    const pos = Math.floor(seeks.position(p.currentTime()));
     const url = api.masterUrl(itemId, {
       streamToken: streamTokenRef.current,
       quality: id || undefined,
@@ -851,10 +867,11 @@ function Player({
     });
     setBuffering(true);
     // The reload restarts at the head and seeks back to `pos`; until it gets
-    // there the last played position stands.
+    // there the last played position stands, and a seek starts from `pos`.
     guardRef.current?.expectSeek(pos);
+    seeks.seekTo(pos, durationRef.current);
     void p.load(url, { startSec: pos > 0 ? pos : undefined });
-  }, [itemId]);
+  }, [itemId, seeks]);
 
   const togglePlay = useCallback(() => {
     playerRef.current?.togglePlay();
@@ -864,15 +881,15 @@ function Player({
   const seekBy = useCallback((delta: number) => {
     const p = playerRef.current;
     if (!p) return;
-    const dur = durationRef.current;
-    const target = p.currentTime() + delta;
-    const clamped = Math.max(0, dur > 0 ? Math.min(target, dur) : target);
+    // From where a seek still in flight goes, else from the playhead; between
+    // the head and the end (@/lib/seek).
+    const target = seeks.seekBy(delta, p.currentTime(), durationRef.current);
     // `current` moves at once so the scrub bar follows the remote; the resume
     // position waits until playback reports it got there.
-    guardRef.current?.expectSeek(clamped);
-    p.seek(clamped);
-    setCurrent(clamped);
-  }, []);
+    guardRef.current?.expectSeek(target);
+    p.seek(target);
+    setCurrent(target);
+  }, [seeks]);
 
   /* ── Remote keys. Registered via useRemoteKey so they fire before the focus
      engine's arrow navigation; preventDefault() stops the engine also acting on
