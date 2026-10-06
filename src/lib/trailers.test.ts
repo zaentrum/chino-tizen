@@ -9,7 +9,6 @@ import {
   isNotFoundError,
   localTrailer,
   pickTrailer,
-  seekTarget,
   trailerChoice,
   trailerFailure,
   trailerPath,
@@ -132,12 +131,4 @@ test('not there (400, 404, 410) is not available; anything else failed', () => {
   assert.equal(isNotFoundError(new Error('chino-api 502')), false);
   assert.equal(isNotFoundError(new Error('Failed to fetch')), false);
   assert.equal(isNotFoundError('chino-api 404'), false);
-});
-
-test('a seek stays between the head and the end', () => {
-  assert.equal(seekTarget(30, 10, 120), 40);
-  assert.equal(seekTarget(5, -10, 120), 0);
-  assert.equal(seekTarget(115, 10, 120), 120);
-  // The end not known yet: forward as asked.
-  assert.equal(seekTarget(5, 10, 0), 15);
 });

@@ -111,10 +111,3 @@ export function trailerFailure(status: number | null | undefined): 'not-found' |
 export function isNotFoundError(e: unknown): boolean {
   return e instanceof Error && /^chino-api (400|404|410)$/.test(e.message.trim());
 }
-
-/** Where a seek of `delta` seconds from `current` lands: never before the
- *  head, never past the end once the duration is known. */
-export function seekTarget(current: number, delta: number, duration: number): number {
-  const target = current + delta;
-  return Math.max(0, duration > 0 ? Math.min(target, duration) : target);
-}
