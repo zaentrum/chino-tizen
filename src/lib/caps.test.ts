@@ -29,19 +29,43 @@ const video = (...tokens: string[]) => {
 const panel = (uhd: boolean, eightK = false) => ({
   productinfo: { isUdPanelSupported: () => uhd, is8KPanelSupported: () => eightK },
 });
+/** A TV whose web engine is asked for every codec: one without AVPlay,
+ *  where hls.js plays through MSE. */
 const tv = (env: Omit<CapsEnv, 'tizen'>): string => deviceCaps({ tizen: true, ...env });
+/** A TV that plays through AVPlay, as a Samsung TV does. */
+const avTv = (env: Omit<CapsEnv, 'tizen' | 'avplay'>): string => deviceCaps({ tizen: true, avplay: true, ...env });
 
 test('a 4K TV: what its engine says yes to, at the height of its panel', () => {
   assert.equal(
     tv({ webapis: panel(true), mediaSource: mse('avc', 'hvc', 'aac', 'mp3', 'ac3', 'eac3'), video: video() }),
     'avc:2160,hvc:2160,aac,mp3,ac3,eac3',
   );
+  assert.equal(
+    avTv({ webapis: panel(true), mediaSource: mse('avc', 'hvc', 'aac', 'mp3', 'ac3', 'eac3'), video: video() }),
+    'avc:2160,hvc:2160,aac,mp3,ac3,eac3',
+  );
 });
 
-test('a TV that does not report HEVC, AC-3 or E-AC-3 is not sent them', () => {
+test('a TV that does not report HEVC, AC-3 or E-AC-3 is not sent them, but for E-AC-3 through AVPlay', () => {
   // The hard-coded caps sent every TV the HEVC rungs and the 5.1 E-AC-3 group.
   assert.equal(tv({ webapis: panel(true), mediaSource: mse('avc', 'aac', 'mp3'), video: video() }), 'avc:2160,aac,mp3');
   assert.equal(tv({ webapis: panel(true), mediaSource: mse('avc', 'aac', 'eac3'), video: video() }), 'avc:2160,aac,eac3');
+  assert.equal(avTv({ webapis: panel(true), mediaSource: mse('avc', 'aac', 'mp3'), video: video() }), 'avc:2160,aac,mp3,eac3');
+});
+
+test('E-AC-3 where AVPlay plays: every Samsung TV decodes DD+, whatever its web engine says', () => {
+  const engine = { webapis: panel(true), mediaSource: mse('avc', 'aac'), video: video() };
+  assert.equal(avTv(engine), 'avc:2160,aac,eac3');
+  // Said yes to by the engine as well: once.
+  assert.equal(avTv({ ...engine, mediaSource: mse('avc', 'aac', 'eac3') }), 'avc:2160,aac,eac3');
+  assert.equal(avTv({ ...engine, mediaSource: null, video: video('eac3') }), 'avc:2160,aac,eac3');
+  // No codec query at all, no panel.
+  assert.equal(avTv({ webapis: null }), 'avc:1080,aac,mp3,eac3');
+  // No AVPlay: hls.js plays through MSE, and the engine's answer counts.
+  assert.equal(tv(engine), 'avc:2160,aac');
+  assert.equal(tv({ ...engine, avplay: false }), 'avc:2160,aac');
+  // AC-3 is asked, AVPlay or not.
+  assert.equal(avTv({ ...engine, mediaSource: mse('avc', 'aac', 'ac3') }), 'avc:2160,aac,ac3,eac3');
 });
 
 test('an FHD panel caps every codec at 1080, an 8K one HEVC and AV1 at 4320', () => {
@@ -97,6 +121,9 @@ test('off a TV the browser is asked as chino-web asks it: MSE first, no heights'
   assert.equal(deviceCaps({ tizen: false, mediaSource: null, video: video('hvc', 'aac', 'mp3') }), 'avc,hvc,aac,mp3');
   // A panel is not read off a TV.
   assert.equal(deviceCaps({ tizen: false, webapis: panel(true), mediaSource: mse('hvc') }), 'avc,hvc,aac');
+  // E-AC-3 where MSE says so (a desktop Chrome does not), never by assumption.
+  assert.equal(deviceCaps({ tizen: false, mediaSource: mse('avc', 'aac', 'eac3') }), 'avc,aac,eac3');
+  assert.equal(deviceCaps({ tizen: false, avplay: true, mediaSource: mse('avc', 'aac') }), 'avc,aac');
 });
 
 test('the panel height productinfo reports', () => {

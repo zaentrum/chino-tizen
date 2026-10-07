@@ -13,7 +13,8 @@
 //     plays our streams, has no capability query (its getCodecInfo, from
 //     Tizen 10.0, names the codec of what is playing). Samsung's MSE and its
 //     native player sit on the same decoders, so either query saying yes
-//     counts; a codec neither says yes to is not claimed.
+//     counts; a codec neither says yes to is not claimed — but E-AC-3 where
+//     AVPlay plays (below).
 //   - How tall: webapis.productinfo.isUdPanelSupported() (4K or 8K) and
 //     is8KPanelSupported(), the check Samsung's 4K/8K UHD guide gives before
 //     playing UHD through AVPlay. HEVC and AV1 are asked for up to the panel,
@@ -22,7 +23,19 @@
 //   - Not used: webapis.avinfo reports HDR (isHdrTvSupport) and a Dolby
 //     Digital compression mode — neither says what the TV decodes, and caps
 //     has no HDR token; tizen.systeminfo has the platform version and the
-//     size of the app's screen (1920x1080 on a 4K set too), no codecs.
+//     size of the app's screen (1920x1080 on a 4K set too), no codecs;
+//     tizen.tvaudiocontrol's getOutputMode names the output the sound
+//     settings pick (DOLBY_DIGITAL_PLUS only from Tizen 5.5, its privilege
+//     deprecated from 5.0), not what the TV decodes.
+//
+// E-AC-3 is not asked where AVPlay plays: Samsung's media specifications list
+// DD+ (E-AC-3) among the audio codecs of every model group, to 5.1 — the
+// channels of a package's companions — in each TV year read (2017 to 2020,
+// 2022, 2024, 2025), and AVPlay has no query to ask instead. The TV plays it,
+// or passes it through to a sound system. So a TV playing through AVPlay is
+// sent eac3, the 5.1 companions, whatever its web engine says of its own
+// pipeline; one without AVPlay plays through MSE (hls.js), where the engine's
+// answer counts, as off a TV.
 //
 // Where a query is missing the answer is conservative: no codec query at all
 // → avc + aac + mp3; a TV whose panel cannot be read → 1080 for every codec.
@@ -73,8 +86,12 @@ export interface ProductInfo {
 
 /** Where the caps are built: the runtime's answers, each one optional. */
 export interface CapsEnv {
-  /** Running on a Samsung TV, where AVPlay plays what the caps get. */
+  /** Running on a Samsung TV. */
   tizen: boolean;
+  /** AVPlay plays what the caps get: a Samsung TV that loaded
+   *  webapis.avplay, as createPlayer picks it. Else hls.js does, through
+   *  MSE. */
+  avplay?: boolean;
   /** window.webapis, when the TV loaded it. */
   webapis?: { productinfo?: ProductInfo | null } | null;
   /** window.MediaSource. */
@@ -167,6 +184,8 @@ export function deviceCaps(env: CapsEnv): string {
     return `${token}:${token === 'avc' ? Math.min(maxHeight, AVC_MAX_HEIGHT) : maxHeight}`;
   };
   const always = new Set(decodes ? ['avc', 'aac'] : ['avc', 'aac', 'mp3']);
+  // Samsung's media specifications, where AVPlay plays (the top of this file).
+  if (env.tizen && env.avplay) always.add('eac3');
   const tokens: string[] = [];
   for (const p of VIDEO_PROBES) {
     if (always.has(p.token) || decodes?.(p.mime)) tokens.push(sized(p.token));

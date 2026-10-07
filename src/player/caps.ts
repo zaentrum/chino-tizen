@@ -1,11 +1,12 @@
 // The ?caps= beacon for this device: @/lib/caps builds it from what the TV
 // reports (its web engine's codec queries, the panel webapis.productinfo
-// describes), here fed with the real globals. One string per app session —
-// /play/info, the master and every reload of it (a quality switch, Zap) ask
-// with the same caps, as chino-stream wants them asked.
+// describes) and, for E-AC-3, from whether AVPlay plays, here fed with the
+// real globals. One string per app session — /play/info, the master and
+// every reload of it (a quality switch, Zap) ask with the same caps, as
+// chino-stream wants them asked.
 //
 // The webapis are loaded before the app mounts (main.tsx), so the first call
-// already sees productinfo.
+// already sees productinfo and avplay, as createPlayer does.
 
 import { isTizen } from '@/tv/tizen';
 import {
@@ -27,6 +28,8 @@ export function detectCaps(): string {
   if (caps == null) {
     caps = deviceCaps({
       tizen: isTizen(),
+      // createPlayer's choice: AVPlay on a TV that has it.
+      avplay: isTizen() && !!window.webapis?.avplay,
       webapis: { productinfo: productinfo() },
       mediaSource: typeof MediaSource !== 'undefined' ? MediaSource : null,
       video: typeof document !== 'undefined' ? document.createElement('video') : null,
