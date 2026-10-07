@@ -4,8 +4,11 @@
 // audio. Tracks are matched by language across spellings ("de", "ger",
 // "deu", "German", "Deutsch" are one — @/lib/subtitles' table, the
 // counterpart of chino-web's lib/languages.ts), between two of one language
-// by label, else by place, as chino-web's audioRenditionFor does. Pure:
-// audio.test.ts runs it under node --test.
+// by name (the master's NAME, unique in its group), else by label, else by
+// place, as chino-web's audioRenditionFor does. Two of one language are the
+// rule for a client with eac3: chino-stream serves it one audio group, each
+// 5.1 E-AC-3 companion just before its stereo twin ("English 5.1",
+// "English"). Pure: audio.test.ts runs it under node --test.
 
 import { knownLanguage, languageName, normalizeLanguage, qualifierOf } from './subtitles.ts';
 
@@ -14,6 +17,8 @@ export interface AudioOption {
   id: string;
   /** Its language tag as the stream gives it ("de", "ger"), if any. */
   lang?: string;
+  /** Its name in the master (NAME), where the engine says. */
+  name?: string;
   /** What the menu shows. */
   label?: string;
   /** The track playing. */
@@ -21,9 +26,11 @@ export interface AudioOption {
 }
 
 /** The audio wanted: a language (the Settings preference), or the track
- *  picked — its language, its label and its place among the tracks. */
+ *  picked — its language, its name, its label and its place among the
+ *  tracks. */
 export interface AudioWant {
   lang?: string;
+  name?: string;
   label?: string;
   place?: number;
 }
@@ -38,11 +45,12 @@ export function trackLanguage(t: { lang?: string; label?: string }): string {
  * The track to switch to so that the audio wanted plays, or null to leave
  * what plays — nothing wanted, no track in the language wanted, or the one
  * wanted is playing already.
- *  - With a language: the track in it; of several, the one with the label
- *    wanted, else the one at the place wanted, else the one playing, else
- *    the first.
- *  - Without (a track picked that names none): the one with its label, else
- *    the one at its place.
+ *  - With a language: the track in it; of several, the one with the name
+ *    wanted, else the one with the label wanted, else the one at the place
+ *    wanted, else the one playing, else the first — a 5.1 companion, first
+ *    in its language, where there is one.
+ *  - Without (a track picked that names none): the one with its name, else
+ *    its label, else the one at its place.
  */
 export function audioTrackFor(
   tracks: readonly AudioOption[],
@@ -50,8 +58,11 @@ export function audioTrackFor(
 ): string | null {
   if (!want || tracks.length === 0) return null;
   const lang = normalizeLanguage(want.lang);
-  const label = (want.label ?? '').trim().toLowerCase();
-  const named = (t: AudioOption) => label !== '' && (t.label ?? '').trim().toLowerCase() === label;
+  const key = (s: string | undefined) => (s ?? '').trim().toLowerCase();
+  const name = key(want.name);
+  const label = key(want.label);
+  const byName = (t: AudioOption) => name !== '' && key(t.name) === name;
+  const named = (t: AudioOption) => label !== '' && key(t.label) === label;
   const atPlace = want.place != null && want.place >= 0 ? tracks[want.place] : undefined;
   let pick: AudioOption | undefined;
   if (lang) {
@@ -59,14 +70,77 @@ export function audioTrackFor(
     pick =
       inLang.length <= 1
         ? inLang[0]
-        : inLang.find(named) ??
+        : inLang.find(byName) ??
+          inLang.find(named) ??
           (atPlace && inLang.includes(atPlace) ? atPlace : undefined) ??
           inLang.find((t) => t.selected) ??
           inLang[0];
   } else {
-    pick = tracks.find(named) ?? atPlace;
+    pick = tracks.find(byName) ?? tracks.find(named) ?? atPlace;
   }
   return pick && !pick.selected ? pick.id : null;
+}
+
+/** What /play/info says of an audio track (audio_tracks). */
+export interface InfoAudioTrack {
+  language?: string;
+  /** The master's NAME for it. */
+  name?: string;
+  title?: string;
+  channels?: number;
+  /** The GROUP-ID of its audio group: set where the list is the renditions
+   *  of the one group the master serves, in the master's order. */
+  group?: string;
+}
+
+/** What a track's label is made of (audioLabels). */
+interface AudioFacts {
+  lang?: string;
+  name?: string;
+  channels?: number;
+  label: string;
+}
+
+/**
+ * The engine's audio tracks with what /play/info says of them, where it lists
+ * the renditions of the one group the master serves, in the master's order —
+ * each with its group: chino-stream's list for a client with eac3, the stereo
+ * tracks with the 5.1 companions among them. Each track takes its name (the
+ * master's NAME, what a pick is found again by) and its channels from there,
+ * its language where the engine has none, and its label from that: AVPlay
+ * names no track and need not give the channels of one it has not played,
+ * and "English 5.1" beside "English" read "English", "English 2". Only when
+ * the two line up — as many tracks, none in another language or of another
+ * channel count than the engine says — else, and for any other list (on the
+ * fly a source's tracks give the source's channels, not the stream's), the
+ * engine's tracks as they are.
+ */
+export function withPlayInfo<T extends AudioFacts>(
+  tracks: readonly T[],
+  info: readonly InfoAudioTrack[] | null | undefined,
+): T[] {
+  const rows = info ?? [];
+  const differ = (a: string, b: string) => a !== '' && b !== '' && a !== b;
+  const linedUp =
+    rows.length > 0 &&
+    rows.length === tracks.length &&
+    rows.every((r, i) => {
+      const t = tracks[i];
+      return (
+        !!r?.group &&
+        !differ(normalizeLanguage(t.lang), normalizeLanguage(r.language)) &&
+        !(t.channels && r.channels && t.channels !== r.channels)
+      );
+    });
+  if (!linedUp) return [...tracks];
+  const merged = tracks.map((t, i) => ({
+    ...t,
+    lang: t.lang || rows[i].language || undefined,
+    name: (rows[i].name || rows[i].title || '').trim() || t.name,
+    channels: rows[i].channels || t.channels,
+  }));
+  const labels = audioLabels(merged);
+  return merged.map((t, i) => ({ ...t, label: labels[i] }));
 }
 
 /** A channel count as menus name the layout; "" for stereo and less. */

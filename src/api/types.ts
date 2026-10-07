@@ -185,15 +185,26 @@ export interface Segment {
  *  file's rows come from ffprobe and carry the per-kind stream `index` (what
  *  /play/subtitles/{index}.vtt extracts); a packaged title's rows come from its
  *  manifest (audio: the renditions; subtitles: the sidecar files, no index).
- *  Languages are ISO 639-2 ("eng"), "und" when untagged. */
+ *  Languages are ISO 639-2 ("eng"), "und" when untagged. For caps with eac3
+ *  the audio rows are the renditions of the master's one audio group instead,
+ *  in its order — each 5.1 E-AC-3 companion just before its stereo twin —
+ *  each with its `group`, `rendition` ("a2") and `codec` ("ec-3"); `index` is
+ *  its place there. */
 export interface PlayInfoTrack {
   index?: number;
   codec?: string;
   language?: string;
+  /** What the track is called: the master's NAME for an audio rendition,
+   *  unique in its group ("English 5.1"). */
+  name?: string;
   title?: string;
   default?: boolean;
   forced?: boolean;
   channels?: number;
+  /** The GROUP-ID of the audio group the rendition is in. */
+  group?: string;
+  /** The rendition's id, the folder its URI names ("a2"). */
+  rendition?: string;
 }
 
 /** Result of GET /items/{id}/play/info — the server's decision for this

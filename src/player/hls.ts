@@ -259,16 +259,23 @@ export class HlsEngine implements ChinoPlayer, SubtitleCapableEngine {
     }
   }
 
+  // The renditions of the playing level's audio group, in the master's
+  // order: for a client with eac3 the one group with each 5.1 companion
+  // beside its stereo twin ("English 5.1", "English"), the master's CHANNELS
+  // telling them apart.
   audioTracks(): PlayerAudioTrack[] {
     const hls = this.hls;
     if (!hls || !hls.audioTracks?.length) return [];
-    const labels = audioLabels(
-      hls.audioTracks.map((t) => ({ lang: t.lang, name: t.name, channels: Number(t.channels) || undefined })),
-    );
+    const meta = hls.audioTracks.map((t) => ({
+      lang: t.lang || undefined,
+      name: t.name || undefined,
+      channels: Number(t.channels) || undefined,
+    }));
+    const labels = audioLabels(meta);
     return hls.audioTracks.map((t, i) => ({
       id: String(t.id ?? i),
       label: labels[i],
-      lang: t.lang || undefined,
+      ...meta[i],
       selected: i === hls.audioTrack,
     }));
   }

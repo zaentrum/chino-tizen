@@ -58,7 +58,7 @@ import {
   resumeStartSec,
   type ProgressGuard,
 } from '@/lib/progress';
-import { audioTrackFor, type AudioWant } from '@/lib/audio';
+import { audioTrackFor, withPlayInfo, type AudioWant } from '@/lib/audio';
 import { extraHeading, playPlan } from '@/lib/playMode';
 import { chosenQuality, qualityMenu } from '@/lib/qualities';
 import { createSeekAccumulator, type SeekAccumulator } from '@/lib/seek';
@@ -306,6 +306,8 @@ function Player({
   // The extra playing, in the extra mode, once the title lists it.
   const [extra, setExtra] = useState<ExtraRef | null>(null);
   const [playInfo, setPlayInfo] = useState<PlayInfo | null>(null);
+  // The same, for the engine listeners, which register once.
+  const playInfoRef = useRef<PlayInfo | null>(null);
 
   // Stream token + caps captured once at mount; both feed every master URL
   // (re-used on a quality switch). Refs so the quality-switch closure reads
@@ -329,7 +331,9 @@ function Player({
   const [firstFrame, setFirstFrame] = useState(false);
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
-  // The engine's audio tracks, read off its 'tracks' event (after every load).
+  // The engine's audio tracks, read off its 'tracks' event (after every load),
+  // with what /play/info says of them (@/lib/audio withPlayInfo): for caps
+  // with eac3, each 5.1 companion its own entry beside its stereo twin.
   const [audioTracks, setAudioTracks] = useState<PlayerAudioTrack[]>([]);
   // The audio to play (@/lib/audio): Settings → Audio's language until a
   // track is picked in the menu, then that track. Put on in every source the
@@ -502,12 +506,13 @@ function Player({
       setDuration(player.duration());
     });
     // The audio tracks of the source loaded: the one wanted goes on — the
-    // preferred language, or the track picked before a quality switch —
-    // and the menu lists them.
+    // preferred language, or the track picked before a quality switch, by
+    // its name — and the menu lists them.
+    const listAudio = () => withPlayInfo(player.audioTracks(), playInfoRef.current?.audio_tracks);
     const offTracks = player.on('tracks', () => {
-      const id = audioTrackFor(player.audioTracks(), audioWantRef.current);
+      const id = audioTrackFor(listAudio(), audioWantRef.current);
       if (id) player.setAudioTrack(id);
-      setAudioTracks(player.audioTracks());
+      setAudioTracks(listAudio());
     });
     const offPlaying = player.on('playing', () => {
       pausedRef.current = false;
@@ -560,6 +565,7 @@ function Player({
         if (cancelled) return;
         setItem(loadedItem);
         setPlayInfo(info);
+        playInfoRef.current = info;
         streamTokenRef.current = token;
 
         // An extra plays from its own master; one the title does not list is
@@ -1226,10 +1232,11 @@ function Player({
             const picked = audioTracks[place];
             if (p && picked) {
               // The pick, not the setting, from now on: found again in the
-              // source a quality switch loads (its language, label, place).
-              audioWantRef.current = { lang: picked.lang, label: picked.label, place };
+              // source a quality switch loads (its language, then its name,
+              // label or place: "English 5.1" or "English").
+              audioWantRef.current = { lang: picked.lang, name: picked.name, label: picked.label, place };
               p.setAudioTrack(id);
-              setAudioTracks(p.audioTracks());
+              setAudioTracks(withPlayInfo(p.audioTracks(), playInfo?.audio_tracks));
             }
             closeMenu('audio');
             noteInteraction();

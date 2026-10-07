@@ -3,7 +3,7 @@
 // quality switch. Excluded from the app's tsc program.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { audioLabels, audioTrackFor, trackLanguage } from './audio.ts';
+import { audioLabels, audioTrackFor, trackLanguage, withPlayInfo } from './audio.ts';
 import { knownLanguage, playingAudioLanguage } from './subtitles.ts';
 
 const tracks = (...langs: (string | undefined)[]) =>
@@ -59,6 +59,79 @@ test('a pick that names no language is found by its label, else by its place', (
   assert.equal(audioTrackFor(und, { place: 1 }), '11');
   assert.equal(audioTrackFor(und, { place: 0 }), null);
   assert.equal(audioTrackFor(und, { place: 7 }), null);
+});
+
+// The one audio group chino-stream serves caps with eac3: each 5.1 E-AC-3
+// companion just before its stereo twin, the companion the default.
+const union = [
+  { id: 'a2', lang: 'en', name: 'English 5.1', channels: 6, label: 'English 5.1', selected: true },
+  { id: 'a0', lang: 'en', name: 'English', channels: 2, label: 'English' },
+  { id: 'a3', lang: 'de', name: 'German 5.1', channels: 6, label: 'German 5.1' },
+  { id: 'a1', lang: 'de', name: 'German', channels: 2, label: 'German' },
+];
+
+test('the 5.1 companions: the one picked by its name, the preferred language on its 5.1', () => {
+  // The stereo twin picked, found again after a quality switch by its name -
+  // not at the place it was picked at, where the order differs.
+  const reloaded = [union[1], union[0], union[2], union[3]].map((t) => ({ ...t, selected: t.id === 'a2' }));
+  assert.equal(audioTrackFor(reloaded, { lang: 'en', name: 'English', label: 'Track', place: 1 }), 'a0');
+  assert.equal(audioTrackFor(union, { lang: 'en', name: 'english', place: 0 }), 'a0', 'the name in any case');
+  assert.equal(audioTrackFor(union, { name: 'German 5.1' }), 'a3', 'a pick that names no language');
+  assert.equal(audioTrackFor(union, { lang: 'en', name: 'English 5.1' }), null, 'it plays already');
+  // Settings → Audio: the language, on the track playing in it, else the
+  // first - the companion.
+  assert.equal(audioTrackFor(union, { lang: 'en' }), null);
+  assert.equal(audioTrackFor(union, { lang: 'de' }), 'a3');
+  assert.deepEqual(
+    audioLabels(union.map(({ lang, name, channels }) => ({ lang, name, channels }))),
+    ['English 5.1', 'English', 'German 5.1', 'German'],
+  );
+});
+
+test("/play/info's group fills in what the engine does not say: names and channels", () => {
+  // AVPlay: no NAME, and here no channels for a rendition it has not played.
+  const engine = [
+    { id: '1', lang: 'eng', label: 'English', selected: true },
+    { id: '2', lang: 'eng', label: 'English 2' },
+    { id: '3', lang: 'ger', channels: 2, label: 'German' },
+  ];
+  const info = [
+    { index: 0, codec: 'ec-3', language: 'en', name: 'English 5.1', channels: 6, default: true, group: 'audio-surround', rendition: 'a2' },
+    { index: 1, codec: 'mp4a.40.2', language: 'en', name: 'English', channels: 2, group: 'audio-surround', rendition: 'a0' },
+    { index: 2, codec: 'mp4a.40.2', language: 'de', name: 'German', channels: 2, group: 'audio-surround', rendition: 'a1' },
+  ];
+  const tracks = withPlayInfo(engine, info);
+  assert.deepEqual(
+    tracks.map((t) => [t.id, t.label, t.name, t.channels, t.selected ?? false]),
+    [
+      ['1', 'English 5.1', 'English 5.1', 6, true],
+      ['2', 'English', 'English', 2, false],
+      ['3', 'German', 'German', 2, false],
+    ],
+  );
+  // A track the engine names no language of takes /play/info's.
+  assert.equal(withPlayInfo([{ id: '1', label: 'Unknown' }], [info[0]])[0].label, 'English 5.1');
+});
+
+test("/play/info is left out where it does not line up with the engine's tracks", () => {
+  const engine = [
+    { id: '1', lang: 'en', label: 'English' },
+    { id: '2', lang: 'de', label: 'German' },
+  ];
+  const row = (language: string, channels: number, group?: string) => ({ language, name: `Track ${language}`, channels, group });
+  const unchanged = (tracks: typeof engine, info: Parameters<typeof withPlayInfo>[1]) =>
+    assert.deepEqual(withPlayInfo(tracks, info), tracks);
+  unchanged(engine, null);
+  unchanged(engine, []);
+  // Not as many.
+  unchanged(engine, [row('en', 6, 'g')]);
+  // Another language at a place.
+  unchanged(engine, [row('de', 2, 'g'), row('en', 2, 'g')]);
+  // Another channel count than the engine says.
+  unchanged([{ ...engine[0], channels: 2 }, engine[1]], [row('en', 6, 'g'), row('de', 2, 'g')]);
+  // Rows without a group: a source's tracks on the fly, whose channels are
+  // the source's, not the stream's (stereo AAC).
+  unchanged(engine, [row('en', 6), row('de', 6)]);
 });
 
 test('after a quality switch the pick is found again in the new list', () => {

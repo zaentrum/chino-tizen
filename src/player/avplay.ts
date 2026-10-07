@@ -291,7 +291,10 @@ export class AvplayEngine implements ChinoPlayer {
   }
 
   // AVPlay's AUDIO extra_info: {"language","channels","sample_rate",
-  // "bit_rate","fourCC"} — the language as the master's LANGUAGE gives it.
+  // "bit_rate","fourCC"} — the language as the master's LANGUAGE gives it,
+  // no NAME. For a client with eac3 the master's one group holds each 5.1
+  // companion beside its stereo twin; the screen fills in what /play/info
+  // says of them (@/lib/audio withPlayInfo).
   audioTracks(): PlayerAudioTrack[] {
     const audio = this.tracks.filter((t) => t.type === 'AUDIO');
     const meta = audio.map((t) => trackMeta(t));
@@ -301,6 +304,8 @@ export class AvplayEngine implements ChinoPlayer {
       id: String(t.index),
       label: labels[i],
       lang: meta[i].lang,
+      name: meta[i].name,
+      channels: meta[i].channels,
       selected: t.index === playing,
     }));
   }

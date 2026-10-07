@@ -16,6 +16,11 @@ export interface PlayerAudioTrack {
   label: string;
   /** Its language tag as the stream gives it ("de", "ger"), if any. */
   lang?: string;
+  /** Its name in the master (NAME, unique in its group: "English 5.1"),
+   *  where the engine says. */
+  name?: string;
+  /** Its channels (6 for 5.1), where the engine says. */
+  channels?: number;
   /** The rendition playing (or picked, while the engine waits to switch). */
   selected?: boolean;
 }
