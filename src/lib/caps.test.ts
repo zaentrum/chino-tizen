@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {
   AUDIO_PROBES,
   VIDEO_PROBES,
+  capsFor,
   deviceCaps,
   needsUhdDecoderMode,
   panelHeight,
@@ -66,6 +67,26 @@ test('E-AC-3 where AVPlay plays: every Samsung TV decodes DD+, whatever its web 
   assert.equal(tv({ ...engine, avplay: false }), 'avc:2160,aac');
   // AC-3 is asked, AVPlay or not.
   assert.equal(avTv({ ...engine, mediaSource: mse('avc', 'aac', 'ac3') }), 'avc:2160,aac,ac3,eac3');
+});
+
+test('the caps per mode: the full player with the 5.1 companions, a Zap preview stereo AAC', () => {
+  // A TV through AVPlay whose engine says yes to AC-3 too: either surround
+  // codec would put a package's 5.1 group, its companion the default, before
+  // a preview.
+  const tv4k = avTv({ webapis: panel(true), mediaSource: mse('avc', 'hvc', 'aac', 'mp3', 'ac3'), video: video() });
+  assert.equal(capsFor(tv4k, 'player'), 'avc:2160,hvc:2160,aac,mp3,ac3,eac3');
+  assert.equal(capsFor(tv4k, 'zap'), 'avc:2160,hvc:2160,aac,mp3');
+  // The heights and the rest stay; a TV that had nothing to strip, as it was.
+  const fhd = avTv({ webapis: panel(false), mediaSource: mse('avc', 'aac', 'opus'), video: video() });
+  assert.equal(capsFor(fhd, 'player'), 'avc:1080,aac,opus,eac3');
+  assert.equal(capsFor(fhd, 'zap'), 'avc:1080,aac,opus');
+  assert.equal(capsFor(tv({ webapis: null }), 'zap'), 'avc:1080,aac,mp3');
+  // Off a TV, where MSE says yes to them.
+  const browser = deviceCaps({ tizen: false, mediaSource: mse('avc', 'aac', 'ac3', 'eac3') });
+  assert.equal(capsFor(browser, 'player'), 'avc,aac,ac3,eac3');
+  assert.equal(capsFor(browser, 'zap'), 'avc,aac');
+  // Spelled any way chino-stream reads it.
+  assert.equal(capsFor('avc,aac, EAC3 ,Ac3', 'zap'), 'avc,aac');
 });
 
 test('an FHD panel caps every codec at 1080, an 8K one HEVC and AV1 at 4320', () => {

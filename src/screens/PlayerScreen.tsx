@@ -515,7 +515,9 @@ function Player({
     const resumeFromQuery =
       Number.isFinite(resumeParam) && resumeParam > 0 ? Math.floor(resumeParam) : 0;
 
-    const caps = detectCaps();
+    // The full player's caps: with the 5.1 companions where the TV decodes
+    // them (Zap's previews ask without).
+    const caps = detectCaps('player');
     capsRef.current = caps;
 
     let cancelled = false;

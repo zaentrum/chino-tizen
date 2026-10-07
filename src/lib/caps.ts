@@ -3,9 +3,10 @@
 // optional ":<height>", audio aac / mp3 / opus / ac3 / eac3. A token that is
 // missing means "not decoded here": a packaged ladder is served without the
 // rungs and audio groups it names (no HEVC rungs without hvc, no 5.1 E-AC-3
-// group without eac3), anything else is transcoded. The player, the quality
-// switch and Zap send the one string built here. Pure: caps.test.ts runs it
-// with faked webapis under node --test.
+// group without eac3), anything else is transcoded. The full player and its
+// quality switch send the string built here, Zap the same without the 5.1
+// companions' tokens (capsFor). Pure: caps.test.ts runs it with faked
+// webapis under node --test.
 //
 // What a Tizen web app can ask, per Samsung's references:
 //   - Which codecs: only the web engine's own queries,
@@ -34,8 +35,9 @@
 // 2022, 2024, 2025), and AVPlay has no query to ask instead. The TV plays it,
 // or passes it through to a sound system. So a TV playing through AVPlay is
 // sent eac3, the 5.1 companions, whatever its web engine says of its own
-// pipeline; one without AVPlay plays through MSE (hls.js), where the engine's
-// answer counts, as off a TV.
+// pipeline — in the full player; Zap's previews stay stereo (capsFor). One
+// without AVPlay plays through MSE (hls.js), where the engine's answer
+// counts, as off a TV.
 //
 // Where a query is missing the answer is conservative: no codec query at all
 // → avc + aac + mp3; a TV whose panel cannot be read → 1080 for every codec.
@@ -194,4 +196,29 @@ export function deviceCaps(env: CapsEnv): string {
     if (always.has(p.token) || decodes?.(p.mime)) tokens.push(p.token);
   }
   return tokens.join(',');
+}
+
+/** What the caps are asked for: the full player (a title, one of its
+ *  extras) or a Zap preview. */
+export type CapsMode = 'player' | 'zap';
+
+/** The tokens a package's 5.1 companions come with: the packager's
+ *  SURROUND_AUDIO writes them E-AC-3 or AC-3, and chino-stream serves either
+ *  group, the companion its default, to caps that name its codec. */
+const SURROUND_TOKENS = new Set(['eac3', 'ac3']);
+
+/**
+ * The caps `mode` asks with, from the device's (deviceCaps): the full
+ * player's as they are; a Zap preview's without eac3 and ac3, so that it is
+ * served a package's stereo AAC renditions and not the 5.1 companion a
+ * title's audio would start on — a preview wants the smaller rendition and a
+ * fast start, not surround. Its master, /play/info and /prewarm all ask
+ * with these, as chino-stream wants a session's asked alike.
+ */
+export function capsFor(caps: string, mode: CapsMode): string {
+  if (mode === 'player') return caps;
+  return caps
+    .split(',')
+    .filter((t) => !SURROUND_TOKENS.has(t.split(':')[0].trim().toLowerCase()))
+    .join(',');
 }
