@@ -49,9 +49,9 @@ export interface Subtitle {
   // through libpgs's canvas overlay. Missing means a text track.
   format?: string;
   default?: boolean;
-  // A forced track, where the server says so: chino-api does not yet (its
-  // katalog rows have no such column), so a label saying "Forced" counts
-  // (@/lib/subtitles saysForced).
+  // A forced track: chino-api sends true on one (katalog-api's forced, since
+  // chino-api a9afe14), nothing on another. From a server before that, a
+  // label saying "Forced" counts (@/lib/subtitles saysForced).
   forced?: boolean;
   // Synthesised playback URL (only present on the /subtitles list response).
   url?: string;

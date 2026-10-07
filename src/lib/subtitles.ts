@@ -258,9 +258,10 @@ export interface SidecarSubtitle {
   label?: string;
   format?: string;
   default?: boolean;
-  /** Covers only the lines in another language than the audio's. chino-api
-   *  does not send it (katalog's rows have no such column); a label that
-   *  says so counts (saysForced). */
+  /** Covers only the lines in another language than the audio's: chino-api
+   *  sends true on such a track (katalog-api's forced). A server from
+   *  before sends none, and there a label that says so counts
+   *  (saysForced). */
   forced?: boolean;
   /** "/api/v1/play/subs/{id}.vtt", origin-relative. */
   url?: string;
