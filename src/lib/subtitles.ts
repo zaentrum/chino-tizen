@@ -2,10 +2,12 @@
 // offers: chino-api's sidecar list (GET /items/{id}/subtitles, each with a
 // /api/v1/play/subs/{id}.vtt url) and the embedded text streams /play/info
 // reports (served as WebVTT by /items/{id}/play/subtitles/{index}.vtt). They
-// are labelled by language name, one is on by default only when the audio is
-// not in the viewer's language, and their cue files — WebVTT, or SRT (a .srt
-// sidecar is served as SRT even at its .vtt url) — are parsed here for the
-// player's own overlay. Pure: subtitles.test.ts runs it under node --test.
+// are labelled by language name; a full one is on by default only when the
+// audio is not in the viewer's language, else the forced one in the audio's
+// language where there is one, following the audio as it changes until the
+// viewer picks; and their cue files — WebVTT, or SRT (a .srt sidecar is
+// served as SRT even at its .vtt url) — are parsed here for the player's own
+// overlay. Pure: subtitles.test.ts runs it under node --test.
 
 import type { PlayerSubtitle } from '../player/types';
 
@@ -256,8 +258,20 @@ export interface SidecarSubtitle {
   label?: string;
   format?: string;
   default?: boolean;
+  /** Covers only the lines in another language than the audio's. chino-api
+   *  does not send it (katalog's rows have no such column); a label that
+   *  says so counts (saysForced). */
+  forced?: boolean;
   /** "/api/v1/play/subs/{id}.vtt", origin-relative. */
   url?: string;
+}
+
+/** Does a server label call its track forced — "Forced", "English
+ *  (Forced)", "eng.forced" — and not "Non-forced"? The rule the packager
+ *  reads a source's titles by. */
+export function saysForced(label: string | null | undefined): boolean {
+  const t = label ?? '';
+  return /\bforced\b/i.test(t) && !/\b(non|not|no|un)[- ]?forced\b/i.test(t);
 }
 
 /** A subtitle stream /play/info lists in subtitle_tracks. ffprobe's rows for
@@ -313,7 +327,7 @@ export function buildSubtitleTracks(o: {
       url: o.resolve(s.url || `/api/v1/play/subs/${encodeURIComponent(s.id)}.vtt`),
       format,
       default: !!s.default,
-      forced: false,
+      forced: !!s.forced || saysForced(s.label),
     });
   }
   for (const t of o.embedded) {
@@ -354,13 +368,14 @@ export function playingAudioLanguage(
 }
 
 /**
- * The subtitle on by default, or null for off. Off unless the audio is in
- * another language than the viewer's: with a preferred language set and audio
- * known to be in a different one, the first full (not forced) track in the
- * preferred language. A forced track only covers foreign-language lines of
- * the original audio, so it is no subtitle for a whole foreign soundtrack. A
- * server's "default" flag is not followed: a foreign track marked default
- * would otherwise switch itself on.
+ * The full subtitle on by default, or null for none. None unless the audio is
+ * in another language than the viewer's: with a preferred language set and
+ * audio known to be in a different one, the first full (not forced) track in
+ * the preferred language. A forced track only covers foreign-language lines
+ * of the original audio, so it is no subtitle for a whole foreign soundtrack
+ * (where none comes on, autoSubtitle puts the forced one on). A server's
+ * "default" flag is not followed: a foreign track marked default would
+ * otherwise switch itself on.
  */
 export function pickDefaultSubtitle(
   tracks: readonly PlayerSubtitle[],
@@ -372,6 +387,66 @@ export function pickDefaultSubtitle(
   if (!audio || audio === wanted) return null;
   const match = tracks.find((t) => normalizeLanguage(t.lang) === wanted && !t.forced);
   return match ? match.id : null;
+}
+
+/**
+ * The forced track for audio in `audioLang`, or null: a forced track carries
+ * the lines the audio leaves in another language (a sign, a few words in
+ * another tongue), in the audio's own language, so it is the one in the
+ * language of the audio — of several, text before an image format (PGS),
+ * else the first. Null when the audio's language is not known, or no
+ * forced track is in it.
+ */
+export function pickForcedSubtitle(
+  tracks: readonly PlayerSubtitle[],
+  audioLang: string | null | undefined,
+): string | null {
+  const audio = normalizeLanguage(audioLang);
+  if (!audio) return null;
+  const forced = tracks.filter((t) => t.forced && normalizeLanguage(t.lang) === audio);
+  return (forced.find((t) => subtitleKind(t.format) === 'text') ?? forced[0])?.id ?? null;
+}
+
+/**
+ * The subtitle on by itself, or null for off: the full track in the viewer's
+ * language when the audio is in another (pickDefaultSubtitle); where that
+ * puts none on — the audio in the viewer's language, no subtitle language
+ * set, no full track in it — the forced track in the audio's language
+ * (pickForcedSubtitle).
+ */
+export function autoSubtitle(
+  tracks: readonly PlayerSubtitle[],
+  o: { audioLang?: string; preferredLang?: string },
+): string | null {
+  return pickDefaultSubtitle(tracks, o) ?? pickForcedSubtitle(tracks, o.audioLang);
+}
+
+/** The subtitle on screen, and who chose it. */
+export interface SubtitleChoice {
+  /** The track on screen; null for off. */
+  id: string | null;
+  /** The viewer picked it in the menu, Off as well: it stays for the
+   *  session. Else the rules chose it (autoSubtitle), and it follows the
+   *  audio. */
+  picked: boolean;
+}
+
+/**
+ * The subtitle once the audio plays in `audioLang` — the language of the
+ * track the engine plays, again whenever another one plays: the rules'
+ * choice for that language (autoSubtitle), so a forced track follows the
+ * audio from one language to the next. One the viewer picked, a track or
+ * Off, stays, whatever the audio; audio whose language is not known changes
+ * nothing. The same choice, not a copy, when nothing changes.
+ */
+export function subtitleForAudio(
+  choice: SubtitleChoice,
+  tracks: readonly PlayerSubtitle[],
+  o: { audioLang?: string; preferredLang?: string },
+): SubtitleChoice {
+  if (choice.picked || !normalizeLanguage(o.audioLang)) return choice;
+  const id = autoSubtitle(tracks, o);
+  return id === choice.id ? choice : { id, picked: false };
 }
 
 /* ─────────────────────────────────  Cues  ────────────────────────────────── */

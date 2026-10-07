@@ -4,14 +4,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  autoSubtitle,
   buildSubtitleTracks,
   cueTextAt,
   languageName,
   normalizeLanguage,
   parseSubtitleCues,
   pickDefaultSubtitle,
+  pickForcedSubtitle,
   playingAudioLanguage,
+  saysForced,
+  subtitleForAudio,
   subtitleLabels,
+  type SubtitleChoice,
 } from './subtitles.ts';
 
 test('a language tag in any of its forms is one code', () => {
@@ -133,6 +138,110 @@ test('no preference, unknown audio, or no full track in the language: off', () =
   assert.equal(pickDefaultSubtitle([tracks[1]], { audioLang: 'jpn', preferredLang: 'en' }), null);
   // A track the server marks default is not switched on by that alone.
   assert.equal(pickDefaultSubtitle(tracks, { audioLang: 'jpn', preferredLang: 'fr' }), null);
+});
+
+// A title's tracks: full and forced ones in English and German, a forced
+// PGS one in English first.
+const titleTracks = [
+  track('en-forced-pgs', 'en', { forced: true, format: 'pgs' }),
+  track('en', 'en', { format: 'webvtt' }),
+  track('en-forced', 'en', { forced: true, format: 'webvtt' }),
+  track('de-forced', 'de', { forced: true, format: 'srt' }),
+  track('de', 'de', { format: 'webvtt' }),
+];
+
+test("the audio in the viewer's language: the forced track in it comes on", () => {
+  assert.equal(autoSubtitle(titleTracks, { audioLang: 'eng', preferredLang: 'en' }), 'en-forced');
+  assert.equal(autoSubtitle(titleTracks, { audioLang: 'ger', preferredLang: 'de' }), 'de-forced');
+  // No full track in the viewer's language either: the forced one in the
+  // audio's.
+  assert.equal(autoSubtitle(titleTracks, { audioLang: 'de', preferredLang: 'fr' }), 'de-forced');
+});
+
+test('no subtitle language set (Off in Settings): the forced track still comes on', () => {
+  assert.equal(autoSubtitle(titleTracks, { audioLang: 'de' }), 'de-forced');
+  assert.equal(autoSubtitle(titleTracks, { audioLang: 'en-US', preferredLang: '' }), 'en-forced');
+});
+
+test("audio in another language than the viewer's: the full track, not a forced one", () => {
+  assert.equal(autoSubtitle(titleTracks, { audioLang: 'de', preferredLang: 'en' }), 'en');
+  assert.equal(autoSubtitle(titleTracks, { audioLang: 'eng', preferredLang: 'de' }), 'de');
+});
+
+test('text before an image: a forced PGS track only where no forced text one is', () => {
+  assert.equal(pickForcedSubtitle(titleTracks, 'en'), 'en-forced');
+  assert.equal(pickForcedSubtitle([titleTracks[0]], 'en'), 'en-forced-pgs');
+  assert.equal(pickForcedSubtitle([titleTracks[3]], 'de'), 'de-forced', 'SRT is text');
+});
+
+test("none: no forced track in the audio's language, or the audio's language not known", () => {
+  assert.equal(pickForcedSubtitle(titleTracks, 'fr'), null);
+  for (const lang of ['und', 'zxx', '', undefined]) assert.equal(pickForcedSubtitle(titleTracks, lang), null, String(lang));
+  // A forced track is the audio's language's, not the viewer's.
+  const englishForced = [track('en-forced', 'en', { forced: true })];
+  assert.equal(autoSubtitle(englishForced, { audioLang: 'ja', preferredLang: 'en' }), null);
+  assert.equal(autoSubtitle([track('en', 'en'), track('de', 'de')], { audioLang: 'en', preferredLang: 'en' }), null);
+});
+
+test("the rules' subtitle follows the audio from one language to the next", () => {
+  const follow = (c: SubtitleChoice, audioLang: string, preferredLang?: string) =>
+    subtitleForAudio(c, titleTracks, { audioLang, preferredLang });
+  let c: SubtitleChoice = { id: autoSubtitle(titleTracks, { audioLang: 'en' }), picked: false };
+  assert.equal(c.id, 'en-forced');
+  c = follow(c, 'de');
+  assert.deepEqual(c, { id: 'de-forced', picked: false });
+  c = follow(c, 'fr');
+  assert.deepEqual(c, { id: null, picked: false }, 'none in French');
+  c = follow(c, 'eng');
+  assert.deepEqual(c, { id: 'en-forced', picked: false });
+  assert.equal(follow(c, 'en'), c, 'the same language: the same choice');
+  // With a subtitle language: the full track while the audio is another's.
+  c = follow(c, 'de', 'en');
+  assert.deepEqual(c, { id: 'en', picked: false });
+  c = follow(c, 'en', 'en');
+  assert.deepEqual(c, { id: 'en-forced', picked: false });
+});
+
+test("the viewer's pick stays for the session, Off as well, whatever the audio", () => {
+  const off: SubtitleChoice = { id: null, picked: true };
+  assert.equal(subtitleForAudio(off, titleTracks, { audioLang: 'de' }), off);
+  assert.equal(subtitleForAudio(off, titleTracks, { audioLang: 'en', preferredLang: 'en' }), off);
+  const german: SubtitleChoice = { id: 'de', picked: true };
+  assert.equal(subtitleForAudio(german, titleTracks, { audioLang: 'en', preferredLang: 'en' }), german);
+});
+
+test('audio whose language is not known changes nothing', () => {
+  const c: SubtitleChoice = { id: 'en-forced', picked: false };
+  for (const lang of ['und', 'mul', '']) assert.equal(subtitleForAudio(c, titleTracks, { audioLang: lang }), c, lang);
+});
+
+test('a sidecar the server calls forced is forced, by its flag or its label', () => {
+  const tracks = buildSubtitleTracks({
+    itemId: 'm1',
+    sidecars: [
+      { id: 'a', lang: 'en', label: 'Forced' },
+      { id: 'b', lang: 'en', label: 'English (Forced)' },
+      { id: 'c', lang: 'en', label: 'eng.forced' },
+      { id: 'd', lang: 'en', label: 'Non-forced' },
+      { id: 'e', lang: 'en', label: 'English' },
+      { id: 'f', lang: 'de', label: 'Deutsch', forced: true },
+    ],
+    embedded: [],
+    resolve: (path) => path,
+    pgs: false,
+  });
+  assert.deepEqual(
+    tracks.map((t) => [t.id, t.forced]),
+    [['a', true], ['b', true], ['c', true], ['d', false], ['e', false], ['f', true]],
+  );
+  assert.deepEqual(tracks.slice(0, 2).map((t) => t.label), ['English (Forced)', 'English (Forced) 2']);
+  // A sidecar labelled Forced is no full subtitle for a foreign soundtrack.
+  assert.equal(pickDefaultSubtitle(tracks, { audioLang: 'ja', preferredLang: 'en' }), 'd');
+  assert.equal(autoSubtitle(tracks, { audioLang: 'de' }), 'f');
+  for (const label of ['SDH Forced', 'forced narrative']) assert.equal(saysForced(label), true, label);
+  for (const label of ['not forced', 'Unforced', 'Reinforced', 'English', '', undefined]) {
+    assert.equal(saysForced(label), false, String(label));
+  }
 });
 
 test('the playing audio is the default track, else the first', () => {

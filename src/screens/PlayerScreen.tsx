@@ -58,15 +58,17 @@ import {
   resumeStartSec,
   type ProgressGuard,
 } from '@/lib/progress';
-import { audioTrackFor, withPlayInfo, type AudioWant } from '@/lib/audio';
+import { audioTrackFor, trackLanguage, withPlayInfo, type AudioWant } from '@/lib/audio';
 import { extraHeading, playPlan } from '@/lib/playMode';
 import { chosenQuality, qualityMenu } from '@/lib/qualities';
 import { createSeekAccumulator, type SeekAccumulator } from '@/lib/seek';
 import {
+  autoSubtitle,
   buildSubtitleTracks,
-  pickDefaultSubtitle,
   playingAudioLanguage,
+  subtitleForAudio,
   subtitleKind,
+  type SubtitleChoice,
 } from '@/lib/subtitles';
 import {
   extraMasterUrl,
@@ -345,6 +347,34 @@ function Player({
   // <SubtitleOverlay>; PGS only where the engine draws it (hls.js).
   const [subtitles, setSubtitles] = useState<PlayerSubtitle[]>([]);
   const [activeSubId, setActiveSubId] = useState<string | null>(null);
+  // The same for the engine listeners, which register once, with who chose
+  // the one on screen (@/lib/subtitles SubtitleChoice): the rules' choice
+  // follows the language of the audio playing, the viewer's — Off as well —
+  // stays for the session.
+  const subtitlesRef = useRef<PlayerSubtitle[]>([]);
+  const subtitleRef = useRef<SubtitleChoice>({ id: null, picked: false });
+  // Settings → Subtitles' language, which the rules' choice is made with.
+  const subtitleLangRef = useRef(settings.preferredSubtitleLang);
+  const showSubtitle = useCallback((choice: SubtitleChoice) => {
+    subtitleRef.current = choice;
+    setActiveSubId(choice.id);
+    // The engine draws PGS only; a text track (or off) clears it.
+    const p = playerRef.current;
+    if (p && 'setSubtitles' in p) p.setTextTrack(choice.id);
+  }, []);
+  // The audio playing now: the subtitle the rules put on goes with its
+  // language — the forced track from one language to the next.
+  const followAudio = useCallback(
+    (playing: PlayerAudioTrack | undefined) => {
+      if (!playing) return;
+      const next = subtitleForAudio(subtitleRef.current, subtitlesRef.current, {
+        audioLang: trackLanguage(playing),
+        preferredLang: subtitleLangRef.current,
+      });
+      if (next !== subtitleRef.current) showSubtitle(next);
+    },
+    [showSubtitle],
+  );
 
   // Segments (intro/credits/recap) for the skip affordance + auto-skip.
   const [segments, setSegments] = useState<Segment[]>([]);
@@ -512,7 +542,11 @@ function Player({
     const offTracks = player.on('tracks', () => {
       const id = audioTrackFor(listAudio(), audioWantRef.current);
       if (id) player.setAudioTrack(id);
-      setAudioTracks(listAudio());
+      const tracks = listAudio();
+      setAudioTracks(tracks);
+      // The subtitle the rules put on, for the audio that plays: what the
+      // start foresaw, or another language's.
+      followAudio(tracks.find((t) => t.selected));
     });
     const offPlaying = player.on('playing', () => {
       pausedRef.current = false;
@@ -579,11 +613,14 @@ function Player({
 
         // Subtitles: the sidecars + the embedded text streams, labelled by
         // language. Off by default unless the audio is not in the preferred
-        // subtitle language — then that language's track comes on. The audio
-        // is the preferred audio language where the title has it (the engine
-        // switches to it), else the default track's. Should /subtitles fail,
-        // the item's own rows still name the sidecars (their url is the
-        // documented /api/v1/play/subs/{id}.vtt). An extra has none: the
+        // subtitle language — then that language's track comes on — or a
+        // forced track is in the audio's language: then that one, for the
+        // lines the audio leaves in another (@/lib/subtitles autoSubtitle).
+        // The audio is the preferred audio language where the title has it
+        // (the engine switches to it), else the default track's; once the
+        // engine plays, its own track says (followAudio). Should /subtitles
+        // fail, the item's own rows still name the sidecars (their url is
+        // the documented /api/v1/play/subs/{id}.vtt). An extra has none: the
         // item's rows are the title's.
         if (plan.subtitles) {
           const drawsPgs = 'setSubtitles' in player;
@@ -594,16 +631,16 @@ function Player({
             resolve: (path) => api.assetUrl(path, token) ?? path,
             pgs: drawsPgs,
           });
-          const initialSub = pickDefaultSubtitle(tracks, {
-            audioLang: playingAudioLanguage(info?.audio_tracks, settings.preferredAudioLang),
-            preferredLang: settings.preferredSubtitleLang,
-          });
+          subtitlesRef.current = tracks;
           setSubtitles(tracks);
-          setActiveSubId(initialSub);
-          if (drawsPgs) {
-            (player as ChinoPlayer & SubtitleCapableEngine).setSubtitles(tracks);
-            player.setTextTrack(initialSub);
-          }
+          if (drawsPgs) (player as ChinoPlayer & SubtitleCapableEngine).setSubtitles(tracks);
+          showSubtitle({
+            id: autoSubtitle(tracks, {
+              audioLang: playingAudioLanguage(info?.audio_tracks, settings.preferredAudioLang),
+              preferredLang: settings.preferredSubtitleLang,
+            }),
+            picked: false,
+          });
         }
 
         const resolvedQuality = info?.default_quality ?? '';
@@ -702,7 +739,9 @@ function Player({
     // Mount-once: the player + listeners are reused across the play session.
     // itemId and extraId (so the plan) are stable for one mount (App keys the
     // screen by them, so a new one is a fresh mount with fresh refs).
-    // settings is read for the initial audio and subtitle picks only.
+    // settings is read for the initial audio and subtitle picks only (the
+    // subtitle followAudio picks later is made with the language it had
+    // then); showSubtitle and followAudio are stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itemId, extraId]);
 
@@ -1237,6 +1276,8 @@ function Player({
               audioWantRef.current = { lang: picked.lang, name: picked.name, label: picked.label, place };
               p.setAudioTrack(id);
               setAudioTracks(withPlayInfo(p.audioTracks(), playInfo?.audio_tracks));
+              // Another language: the subtitle the rules put on goes with it.
+              followAudio(picked);
             }
             closeMenu('audio');
             noteInteraction();
@@ -1256,11 +1297,9 @@ function Player({
             })),
           ]}
           onPick={(id) => {
-            const next = id === '__off__' ? null : id;
-            // The engine draws PGS only; a text track (or off) clears it.
-            const p = playerRef.current;
-            if (p && 'setSubtitles' in p) p.setTextTrack(next);
-            setActiveSubId(next);
+            // The viewer's: it stays for the session, Off as well, whatever
+            // audio plays.
+            showSubtitle({ id: id === '__off__' ? null : id, picked: true });
             closeMenu('subtitles');
             noteInteraction();
           }}
