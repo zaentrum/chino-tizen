@@ -4,6 +4,7 @@
 //   - katalog Item projection  → chino-api/internal/katalog/client.go (Item)
 //   - segments                 → chino-api/internal/http/series.go + katalog Segment
 //   - people                   → chino-api/internal/http/people.go + katalog Person
+//   - search                   → chino-api/internal/http/search.go + katalog search.go
 //   - /api/config              → chino-api/internal/http/appconfig.go
 //   - /play/info qualities     → chino-stream/internal/play/handler.go
 //
@@ -137,6 +138,27 @@ export interface Item {
   // contract's convenience boolean; the client derives it from watched_at.
   watched_at?: string | null;
   watched?: boolean;
+
+  // Set on a search's titles only (GET /search): how the title matched the
+  // query — exact, prefix, words, alternative, similar or plot (the plot
+  // only when no title matched) — and, on an episode, its series. The
+  // server ranks by them; nothing shows them (@/lib/search SEARCH_TYPES).
+  match?: string;
+  series?: SearchSeries;
+}
+
+/**
+ * The series of an episode a search found (GET /search; chino-api
+ * internal/katalog/search.go SearchSeries): its id and title, its poster
+ * ("/api/v1/items/{id}/poster", stream-token group like any poster; resolve
+ * it with api.assetUrl), and `matched`: whether the series matched the query
+ * by its own title in the same search.
+ */
+export interface SearchSeries {
+  id: string;
+  title: string;
+  matched: boolean;
+  poster_url?: string;
 }
 
 /**
@@ -227,8 +249,8 @@ export interface PlayInfo {
   subtitle_tracks: PlayInfoTrack[];
 }
 
-/** A cast/crew person (GET /people search result; chino-api
- *  internal/katalog/people.go Person). */
+/** A cast/crew person (GET /people search result, and GET /search's people;
+ *  chino-api internal/katalog/people.go Person). */
 export interface Person {
   id: string;
   name: string;
@@ -239,6 +261,9 @@ export interface Person {
   /** Their portrait, "/api/v1/people/{id}/profile" (stream-token group, like
    *  a poster); set only when has_profile. Resolve it with api.assetUrl. */
   profile_url?: string;
+  /** Set on a search's people only (GET /search): how the name matched the
+   *  query. Nothing shows it. */
+  match?: string;
 }
 
 /** A title on a person's filmography: a catalogue item plus the person's
@@ -284,6 +309,14 @@ export interface ListResult {
   total: number;
   limit: number;
   offset: number;
+}
+
+/** Result of GET /search (@/lib/search): the titles ranked together by how
+ *  they match the query, best first, and the people whose names match it,
+ *  ranked apart. The wire wraps them in { product, items, people, source }. */
+export interface SearchResult {
+  items: Item[];
+  people: Person[];
 }
 
 /**

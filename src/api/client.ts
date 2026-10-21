@@ -9,6 +9,7 @@ import type {
   PersonDetail,
   PlayInfo,
   PlayInfoTrack,
+  SearchResult,
   Season,
   Segment,
   Subtitle,
@@ -17,6 +18,7 @@ import type {
 import { apiUrl, withStreamToken } from '@/lib/artwork';
 import { noticeListOf, type NoticeList } from '@/lib/notices';
 import { acceptLanguage } from '@/lib/people';
+import { searchAsBefore, searchCatalog, type SearchRequest } from '@/lib/search';
 
 /**
  * Typed client for chino-api's BFF. Endpoint paths/params mirror chino-web's
@@ -196,10 +198,41 @@ export class ChinoClient {
   }
 
   // ---------------------------------------------------------------------------
+  // Search
+  // ---------------------------------------------------------------------------
+
+  /**
+   * GET /v1/search?q=&types=&limit=&people= — the search, in one answer: the
+   * titles of `types` ranked together by how they match the query, best
+   * first, and the people whose names match it, ranked apart. Wire:
+   * { product, items, people, source }; the titles come as /items sends
+   * them (plus `match`, and an episode's `series`) and are watched-stamped
+   * the same way, the people as /people sends them (plus `match`). Both stay
+   * in the server's order. A server older than the search answers 404: the
+   * search is then made as before, each type's list of the query and
+   * /people best effort (@/lib/search). Other failures throw.
+   */
+  async search(r: SearchRequest): Promise<SearchResult> {
+    const found = await searchCatalog({
+      apiBase: this.base(),
+      request: r,
+      headers: this.authHeaders(),
+      asBefore: () =>
+        searchAsBefore(r, {
+          list: (p) => this.listItems(p).then((l) => l.items),
+          people: (q, limit) => this.searchPeople(q, limit),
+        }),
+    });
+    return { items: found.items.map(stampWatched), people: found.people };
+  }
+
+  // ---------------------------------------------------------------------------
   // People
   // ---------------------------------------------------------------------------
 
-  /** GET /v1/people?q=&limit= — cast/crew name search. Wire: { people, total }. */
+  /** GET /v1/people?q=&limit= — cast/crew name search. Wire: { people, total }.
+   *  The search's people row comes with GET /search; this is its fallback on
+   *  a server older than that (@/lib/search searchAsBefore). */
   async searchPeople(q: string, limit = 20): Promise<Person[]> {
     if (!q) return [];
     const params = new URLSearchParams({ q, limit: String(limit) });
