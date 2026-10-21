@@ -2,16 +2,21 @@
 // Browse / Watchlist) with the LIVE search field hosted in-line below the top
 // bar: activating it opens the on-screen QWERTY (@/components/KeyboardOverlay),
 // and every edit re-runs a debounced search. Results are a "Cast & crew" people
-// row (api.searchPeople) above a merged title grid (movies + series, server
-// relevance order — no client re-rank), exactly like chino-androidtv
-// ui/search/SearchScreen.kt + SearchViewModel.kt and chino-web's single results
-// grid. DOWN from the search field lands on the first focusable result (first
-// person chip when there are people, else the first title card) via autoFocus.
+// row above one title grid, like chino-androidtv ui/search/SearchScreen.kt and
+// chino-web's single results grid. DOWN from the search field lands on the
+// first focusable result (first person chip when there are people, else the
+// first title card) via autoFocus.
 //
-// Data fan-out mirrors SearchViewModel: movies + series + people in parallel;
-// people are best-effort (an older server without /people just leaves the row
-// empty rather than failing the whole search). The 250ms debounce matches the
-// reference VM so we don't hammer chino-api on every keystroke.
+// One call per search, api.search (GET /api/v1/search, @/lib/search): the
+// titles of SEARCH_TYPES — films and series — ranked together by the server,
+// best first, and the people, ranked apart, for the row. The grid shows the
+// titles in exactly that order: no client re-rank, no grouping by type.
+// Episodes are not asked for; SEARCH_TYPES says how they would be. A
+// server older than the search (404) is searched as before: films, then
+// series, and people best-effort (an older server without /people just leaves
+// the row empty rather than failing the whole search). The 250ms debounce
+// matches the reference VM (SearchViewModel.kt) so we don't hammer chino-api
+// on every keystroke.
 //
 // A search that finds no titles and no people shows what addons put in the
 // search.empty slot (@/components/ExtensionSlot), with the query as {q}, as
@@ -21,6 +26,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Search as SearchIcon } from 'lucide-react';
 import type { Item, Person } from '@/api/types';
 import { api } from '@/api/instance';
+import { SEARCH_TYPES } from '@/lib/search';
 import SideRail from '@/components/SideRail';
 import TopBar from '@/components/TopBar';
 import FocusableCard from '@/components/FocusableCard';
@@ -32,8 +38,9 @@ import { focusKey, useFocusable, useRemoteKey } from '@/tv/focus';
 import { TVKey } from '@/tv/keys';
 import { navigate, back } from '@/router';
 
-// Page size for the title fan-out (movies + series each). Matches the
-// SearchViewModel PAGE_SIZE — enough to fill the grid without paging.
+// How many titles a search asks for: films and series together (from a server
+// older than the search, each type's list). Matches the SearchViewModel
+// PAGE_SIZE — enough to fill the grid without paging.
 const PAGE_SIZE = 60;
 // Cap the people row: it sits above the title grid, so a long list would push
 // the titles below the fold. Matches SearchViewModel.PEOPLE_LIMIT.
@@ -114,18 +121,15 @@ export default function SearchScreen(): JSX.Element {
     }
     setState({ kind: 'searching' });
     const run = ++runRef.current;
-    // Fan out movies + series + people in parallel. Movies+series merge into
-    // one grid (movies first) — the reference clients render a single results
-    // grid rather than per-type shelves. People feed the "Cast & crew" row and
-    // are best-effort (404 on an older server → empty row, not a failed search).
-    Promise.all([
-      api.listItems({ q: trimmed, type: 'movie', limit: PAGE_SIZE }).then((r) => r.items),
-      api.listItems({ q: trimmed, type: 'series', limit: PAGE_SIZE }).then((r) => r.items),
-      api.searchPeople(trimmed, PEOPLE_LIMIT).catch(() => [] as Person[]),
-    ])
-      .then(([movies, series, people]) => {
+    // One search: films and series ranked together, best first, for the one
+    // grid as they come — the reference clients render a single results grid
+    // rather than per-type shelves — and the people for the "Cast & crew" row.
+    // A server older than the search is searched as before (films, then
+    // series; people best-effort: 404 → empty row, not a failed search).
+    api
+      .search({ q: trimmed, types: SEARCH_TYPES, limit: PAGE_SIZE, people: PEOPLE_LIMIT })
+      .then(({ items, people }) => {
         if (run !== runRef.current) return; // a newer search superseded this one
-        const items = [...movies, ...series];
         if (items.length === 0 && people.length === 0) {
           setState({ kind: 'nomatches', q: trimmed });
         } else {
@@ -240,10 +244,10 @@ interface ResultsProps {
 }
 
 /**
- * Results view: the "Cast & crew" people row (when any matched) above the merged
- * title grid. The first focusable below the search field gets autoFocus so DOWN
- * from the input lands there: the first person chip when there are people, else
- * the first title card.
+ * Results view: the "Cast & crew" people row (when any matched) above the title
+ * grid, both in the server's order. The first focusable below the search field
+ * gets autoFocus so DOWN from the input lands there: the first person chip when
+ * there are people, else the first title card.
  */
 function Results({ query, items, people, streamToken }: ResultsProps): JSX.Element {
   const hasPeople = people.length > 0;
