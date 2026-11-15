@@ -38,13 +38,18 @@ fi
 # --- everything below runs as the unprivileged user ---
 TIZEN_HOME="${TIZEN_HOME:-$HOME/tizen-studio}"
 TIZEN_DATA="${TIZEN_HOME}-data" # Tizen derives the data dir as <install>-data
-INSTALLER_URL="http://download.tizen.org/sdk/Installer/tizen-studio_6.1/web-cli_Tizen_Studio_6.1_ubuntu-64.bin"
+# Over https, and checked against the sha256 of the 6.1 installer as
+# download.tizen.org serves it (280379318 bytes): the release builds and
+# signs the package with what this runs.
+INSTALLER_URL="https://download.tizen.org/sdk/Installer/tizen-studio_6.1/web-cli_Tizen_Studio_6.1_ubuntu-64.bin"
+INSTALLER_SHA256="7f33fe09eda4eb5d50463cf997e8f676d455060720470070ae1932994413aaf4"
 export PATH="$TIZEN_HOME/tools/ide/bin:$TIZEN_HOME/tools:$PATH"
 
 # 1) install the CLI.
 if [ ! -x "$TIZEN_HOME/tools/ide/bin/tizen" ]; then
   echo "Installing Tizen Studio CLI 6.1 -> $TIZEN_HOME"
-  curl -fsSL -o /tmp/tizen-cli.bin "$INSTALLER_URL"
+  curl -fsSL --proto '=https' -o /tmp/tizen-cli.bin "$INSTALLER_URL"
+  echo "$INSTALLER_SHA256  /tmp/tizen-cli.bin" | sha256sum -c -
   chmod +x /tmp/tizen-cli.bin
   /tmp/tizen-cli.bin --accept-license "$TIZEN_HOME"
 fi
