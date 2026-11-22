@@ -12,115 +12,6 @@ jobs:
     permissions:
       contents: read
     uses: zaentrum/.github/.github/workflows/neutrality.yml@v1
-    with:
-      exceptions: |
-        .github/workflows/ci.yml  holds the older neutrality check until the shared check replaces it
-
-  # Fails the build if any internal hostname, competitor product name, or
-  # acquisition vocabulary leaks into the public tree. Patterns are kept here
-  # (a heredoc) so this job's own source is excluded from its own grep.
-  neutrality:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Scan for forbidden tokens
-        run: |
-          set -uo pipefail
-          fail=0
-          common=(--exclude-dir=node_modules --exclude-dir=dist
-                  --exclude-dir=.git --exclude-dir=.github
-                  --exclude=package-lock.json --exclude=LICENSE)
-
-          # A name counts where what stands on either side of it is not a
-          # letter or a digit. \b would not do: it counts "_" as part of a
-          # word, so SONARR_API_KEY went through \bsonarr\b unseen. A letter
-          # or a digit on either side still keeps a name out of longer words:
-          # the product names are not in "complex" or "multiplex". (A name run
-          # into camelCase, sonarrUrl, is not caught either; the guard trades
-          # that for no false positives, as the operator repo's
-          # scripts/check-neutrality.sh does.) Plain POSIX classes, which GNU
-          # grep here and BSD grep on a Mac read alike.
-          word() { printf '(^|[^[:alnum:]])(%s)([^[:alnum:]]|$)' "$1"; }
-
-          host_re='nalet\.cloud'
-          # Other media products, put together from pieces so that this file
-          # does not name them either.
-          p1='jelly''fin' p2='pl''ex' p3='em''by' p4='ko''di' p5='nalet''flix'
-          product_re=$(word "$p1|$p2|$p3|$p4|$p5")
-          vocab_re="$(word 'indexer|usenet|torrent|sonarr|radarr|prowlarr|lidarr|bazarr|jackett')"'|\*arr([^[:alnum:]]|$)'
-
-          # The self-test below blames the patterns when a line comes out
-          # wrong; a missing tool would read the same way, so it is named
-          # first. Failing closed either way.
-          for tool in grep tr; do
-            if ! command -v "$tool" >/dev/null 2>&1; then
-              echo "::error::neutrality guard: needs $tool on PATH"
-              exit 2
-            fi
-          done
-
-          # The patterns first, against lines they must and must not flag: a
-          # pattern that has gone blind fails the job before it passes a scan.
-          bad=0
-          expect() { # expect <label> <pattern> <hit|miss> <line>
-            local got=miss
-            if printf '%s\n' "$4" | grep -qiE -- "$2"; then got=hit; fi
-            if [ "$got" != "$3" ]; then
-              echo "::error::neutrality self-test: the $1 pattern should $([ "$3" = hit ] && echo flag || echo pass) this line: $4"
-              bad=1
-            fi
-          }
-          upper=$(printf '%s' "$p2" | tr '[:lower:]' '[:upper:]')
-          # Joined by "_": the names \b let through.
-          expect vocab "$vocab_re" hit 'SONARR_API_KEY=x'
-          expect vocab "$vocab_re" hit 'TORRENT_DIR=/data'
-          expect vocab "$vocab_re" hit 'indexer_url: http://x'
-          expect vocab "$vocab_re" hit 'the *arr_stack'
-          expect product "$product_re" hit "${upper}_TOKEN"
-          expect product "$product_re" hit "${p5}_url"
-          # The forms \b caught, still caught.
-          expect vocab "$vocab_re" hit 'image: ghcr.io/example/radarr:latest'
-          expect vocab "$vocab_re" hit 'Prowlarr'
-          expect vocab "$vocab_re" hit 'the *arr apps'
-          expect product "$product_re" hit "url: http://${p1}:8096"
-          expect product "$product_re" hit "the ${p3} client"
-          expect host "$host_re" hit "db.nalet"".cloud"
-          # Longer words are other words.
-          expect vocab "$vocab_re" miss 'torrential'
-          expect vocab "$vocab_re" miss 'reindexers'
-          expect product "$product_re" miss 'complex'
-          expect product "$product_re" miss 'multiplex'
-          expect product "$product_re" miss 'COMPLEX_QUERY=1'
-          expect product "$product_re" miss 'perplexed'
-          expect product "$product_re" miss 'kodiak'
-          expect host "$host_re" miss 'media.example.org'
-          if [ "$bad" -ne 0 ]; then
-            echo "Neutrality guard: its own patterns are wrong; fix them before trusting a scan."
-            exit 2
-          fi
-          echo "Neutrality self-test passed."
-
-          scan() {
-            local label="$1" pattern="$2"
-            echo "== $label =="
-            if grep -rniIE "${common[@]}" -- "$pattern" .; then
-              echo "::error::neutrality violation ($label)"
-              fail=1
-            fi
-          }
-
-          # Internal hostnames (any *.nalet.cloud, gitlab/kb/registry/sso/identity).
-          scan "internal hostnames" "$host_re"
-          # Competitor product names (case-insensitive).
-          scan "competitor names" "$product_re"
-          # Acquisition vocabulary in user-facing text / code.
-          scan "acquisition vocab" "$vocab_re"
-
-          if [ "$fail" -ne 0 ]; then
-            echo "Neutrality scan failed — see violations above."
-            exit 1
-          fi
-          echo "Neutrality scan passed."
 
   build:
     runs-on: ubuntu-latest
@@ -162,7 +53,7 @@ jobs:
   # Signed .wgt packaging. GUARDED on the author-certificate secret: when it is
   # absent (forks, PRs without secrets) the whole job is skipped — never failed.
   package-wgt:
-    needs: [build, neutrality, check-secrets]
+    needs: [build, check-secrets]
     if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && needs.check-secrets.outputs.has_cert == 'true' }}
     runs-on: ubuntu-latest
     steps:

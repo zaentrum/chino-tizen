@@ -40,7 +40,8 @@ npm test         # node --test src/lib/*.test.ts
 ```
 
 `.github/workflows/ci.yml` runs `npm ci`, `npm test` and `npm run build` on
-every pull request and on `main` (job `build`), beside its `neutrality` job.
+every pull request and on `main` (job `build`), beside its `neutrality-shared`
+job.
 Node runs the TypeScript itself, which takes Node 22.18 or later. The tests
 cover the modules in `src/lib/` and need no TV and no server: those that ask
 chino-api are handed a fake `fetch`, and `caps.test.ts` fakes what the TV
@@ -91,8 +92,5 @@ recorded answers to run the app against.
 
 ## Before a pull request
 
-The workflow's `neutrality` job fails on an internal hostname, another media
-product's name or acquisition words anywhere in the tree but `node_modules`,
-`dist`, `.github`, `package-lock.json` and `LICENSE`, this file included. Its
-patterns are in `.github/workflows/ci.yml`; there is no script that runs them
-locally.
+The organisation's shared check, the workflow's `neutrality-shared` job, is the
+one neutrality check.
